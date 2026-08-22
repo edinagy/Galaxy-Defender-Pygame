@@ -1,0 +1,4 @@
+music_volume = 0.5
+sound_volume = 1.0
+fullscreen = False
+resolution = (1280, 720)
