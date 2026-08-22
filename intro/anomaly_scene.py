@@ -35,8 +35,13 @@ class AnomalyScene:
         )
 
         ship_image = pygame.image.load(
-            "assets/images/player_galaxy_defender.png"
+            "assets/images/player_galaxy_defender_v2.png"
         ).convert_alpha()
+
+        # Elimină marginile transparente ale noului sprite înainte de scalare.
+        visible_bounds = ship_image.get_bounding_rect(min_alpha=8)
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            ship_image = ship_image.subsurface(visible_bounds).copy()
         self.original_ship_image = pygame.transform.smoothscale(
             ship_image,
             (118, 134),
@@ -250,7 +255,7 @@ class AnomalyScene:
             (ship_x - 27, ship_y - 27),
         )
 
-        # Sprite-ul navei conține deja flăcările motoarelor.
+        # Nava este desenată deasupra câmpului luminos al anomaliei.
         self.screen.blit(
             ship_image,
             (ship_x, ship_y),

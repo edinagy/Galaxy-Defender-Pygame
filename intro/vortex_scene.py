@@ -34,9 +34,15 @@ class VortexScene:
             ),
         )
 
-        self.original_ship_image = pygame.image.load(
-            "assets/images/player_galaxy_defender.png"
+        ship_image = pygame.image.load(
+            "assets/images/player_galaxy_defender_v2.png"
         ).convert_alpha()
+
+        # Elimină marginile transparente ale noului sprite înainte de animație.
+        visible_bounds = ship_image.get_bounding_rect(min_alpha=8)
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            ship_image = ship_image.subsurface(visible_bounds).copy()
+        self.original_ship_image = ship_image
 
         self.small_font = pygame.font.Font(None, 27)
         self.medium_font = pygame.font.Font(None, 38)
@@ -248,8 +254,7 @@ class VortexScene:
             (ship_x - 25, ship_y - 25),
         )
 
-        # Imaginea navei conține deja flăcările motoarelor.
-        # Nu desenăm alte flăcări pentru a evita suprapunerea vizuală.
+        # Nava este desenată deasupra aurei produse de vortex.
         self.screen.blit(
             ship_image,
             (ship_x, ship_y),

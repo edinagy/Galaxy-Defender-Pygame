@@ -38,8 +38,13 @@ class PlanetScene:
 
         # Nava folosește același design ca în gameplay.
         ship_image = pygame.image.load(
-            "assets/images/player_galaxy_defender.png"
+            "assets/images/player_galaxy_defender_v2.png"
         ).convert_alpha()
+
+        # Elimină marginile transparente ale noului sprite înainte de scalare.
+        visible_bounds = ship_image.get_bounding_rect(min_alpha=8)
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            ship_image = ship_image.subsurface(visible_bounds).copy()
         self.ship_image = pygame.transform.smoothscale(
             ship_image,
             (130, 145),
@@ -145,8 +150,7 @@ class PlanetScene:
             (ship_x - 10, ship_y + 105),
         )
 
-        # Imaginea navei conține deja flăcările motoarelor.
-        # Adăugăm doar o vibrație mică atunci când motoarele sunt pornite.
+        # O vibrație discretă arată că motoarele navei sunt pornite.
         vibration = int(
             math.sin(self.elapsed_time * 28)
             * self.ship_engine_power

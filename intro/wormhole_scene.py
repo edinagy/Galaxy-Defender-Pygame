@@ -35,8 +35,13 @@ class WormholeScene:
         )
 
         ship_image = pygame.image.load(
-            "assets/images/player_galaxy_defender.png"
+            "assets/images/player_galaxy_defender_v2.png"
         ).convert_alpha()
+
+        # Elimină marginile transparente ale noului sprite înainte de scalare.
+        visible_bounds = ship_image.get_bounding_rect(min_alpha=8)
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            ship_image = ship_image.subsurface(visible_bounds).copy()
         self.original_ship_image = pygame.transform.smoothscale(
             ship_image,
             (122, 138),
@@ -301,7 +306,7 @@ class WormholeScene:
             (ship_x - 22, ship_y - 22),
         )
 
-        # Nava are deja flăcările motoarelor în imagine.
+        # Nava se micșorează treptat pe măsură ce înaintează prin tunel.
         self.screen.blit(
             ship_image,
             (ship_x, ship_y),

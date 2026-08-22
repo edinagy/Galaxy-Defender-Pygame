@@ -35,8 +35,13 @@ class DeadStarScene:
         )
 
         player_image = pygame.image.load(
-            "assets/images/player_galaxy_defender.png"
+            "assets/images/player_galaxy_defender_v2.png"
         ).convert_alpha()
+
+        # Elimină marginile transparente ale noului sprite înainte de scalare.
+        visible_bounds = player_image.get_bounding_rect(min_alpha=8)
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            player_image = player_image.subsurface(visible_bounds).copy()
         self.player_image = pygame.transform.smoothscale(
             player_image,
             (112, 128),
