@@ -1,11 +1,16 @@
 import math
 import random
+from pathlib import Path
 
 import pygame
 
 
 # Rachetă ghidată folosită de ultimul challenge înainte de boss.
 class HomingMissile:
+
+    # Păstrează sprite-urile deja încărcate, ca fiecare rachetă nouă să nu
+    # citească din nou aceleași imagini de pe disc.
+    _sprite_cache = {}
 
     # Configurează tipul, intrarea, combustibilul și manevrabilitatea.
     def __init__(
@@ -22,6 +27,8 @@ class HomingMissile:
         if missile_type == "heavy":
             self.body_length = 64
             self.body_height = 26
+            self.sprite_filename = "missile_heavy.png"
+            self.render_size = (98, 46)
             self.health = 3
             self.maximum_health = 3
             self.speed = 2.85
@@ -33,6 +40,8 @@ class HomingMissile:
         elif missile_type == "interceptor":
             self.body_length = 48
             self.body_height = 18
+            self.sprite_filename = "missile_interceptor.png"
+            self.render_size = (72, 28)
             self.health = 1
             self.maximum_health = 1
             self.speed = 5.1
@@ -44,6 +53,8 @@ class HomingMissile:
         else:
             self.body_length = 52
             self.body_height = 20
+            self.sprite_filename = "missile_standard.png"
+            self.render_size = (78, 32)
             self.health = 1
             self.maximum_health = 1
             self.speed = 3.85
@@ -116,8 +127,58 @@ class HomingMissile:
             self.y = float(-margin)
             self.angle = math.pi / 2
 
-    # Construiește procedural corpul, aripile și miezul rachetei.
+    # Încarcă sprite-ul premium potrivit tipului și îl pregătește pentru joc.
     def _create_image(self):
+        cache_key = (
+            self.sprite_filename,
+            self.render_size,
+        )
+        cached_image = self._sprite_cache.get(cache_key)
+        if cached_image is not None:
+            return cached_image
+
+        image_path = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "images"
+            / "missiles"
+            / self.sprite_filename
+        )
+
+        if image_path.exists():
+            try:
+                missile_image = pygame.image.load(
+                    str(image_path)
+                ).convert_alpha()
+
+                # Elimină spațiul transparent înainte de redimensionare.
+                visible_bounds = missile_image.get_bounding_rect(
+                    min_alpha=8
+                )
+                if (
+                    visible_bounds.width > 0
+                    and visible_bounds.height > 0
+                ):
+                    missile_image = missile_image.subsurface(
+                        visible_bounds
+                    ).copy()
+
+                missile_image = pygame.transform.smoothscale(
+                    missile_image,
+                    self.render_size,
+                )
+                self._sprite_cache[cache_key] = missile_image
+                return missile_image
+            except pygame.error:
+                # Dacă un PNG este deteriorat, jocul folosește varianta veche.
+                pass
+
+        missile_image = self._create_procedural_image()
+        self._sprite_cache[cache_key] = missile_image
+        return missile_image
+
+    # Construiește vechiul desen procedural doar ca variantă de rezervă.
+    def _create_procedural_image(self):
         surface_width = self.body_length + 18
         surface_height = self.body_height + 24
         missile_surface = pygame.Surface(
@@ -217,8 +278,16 @@ class HomingMissile:
         self.y += math.sin(self.angle) * movement_speed
 
         if self.age % 3 == 0:
+            # Trail-ul pornește din motor, nu din centrul sprite-ului.
+            trail_distance = self.render_size[0] * 0.46
             self.trail_points.append(
-                [self.x, self.y, 18]
+                [
+                    self.x
+                    - math.cos(self.angle) * trail_distance,
+                    self.y
+                    - math.sin(self.angle) * trail_distance,
+                    18,
+                ]
             )
 
         for trail_point in self.trail_points[:]:
@@ -308,6 +377,22 @@ class HomingMissile:
                     int(trail_point[1]),
                 ),
                 max(1, int(5 * life_ratio)),
+            )
+
+            # Miezul luminos face evacuarea motorului mai clară pe fundal.
+            core_color = (
+                min(255, int(self.color[0] * life_ratio + 65)),
+                min(255, int(self.color[1] * life_ratio + 45)),
+                min(255, int(self.color[2] * life_ratio + 55)),
+            )
+            pygame.draw.circle(
+                screen,
+                core_color,
+                (
+                    int(trail_point[0]),
+                    int(trail_point[1]),
+                ),
+                max(1, int(2 * life_ratio)),
             )
 
         if self.arming_timer > 0:

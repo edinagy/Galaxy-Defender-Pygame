@@ -616,13 +616,8 @@ class Gameplay:
         self._try_finish_wave()
 
         if self.lives <= 0:
-            # Leaderboard-ul păstrează numai scorul luptei principale.
-            # Scorul campaniei rămâne salvat separat.
-            combat_score = max(
-                0,
-                self.score - self.starting_score,
-            )
-            self.save_score(combat_score)
+            # Salvează exact scorul total afișat jucătorului în timpul run-ului.
+            self.save_score(self.score)
             self.game_over = True
             self.stop_boss_music()
 
@@ -1866,11 +1861,8 @@ class Gameplay:
             self._update_multiplier()
 
             if not self.victory_score_saved:
-                combat_score = max(
-                    0,
-                    self.score - self.starting_score,
-                )
-                self.save_score(combat_score)
+                # Victory folosește același scor total afișat pe HUD.
+                self.save_score(self.score)
                 self.victory_score_saved = True
 
     def _move_objects(self):
