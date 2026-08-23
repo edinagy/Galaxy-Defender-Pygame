@@ -2404,8 +2404,16 @@ class Gameplay:
                 Explosion(
                     enemy_center_x,
                     enemy_center_y,
+                    enemy.enemy_type,
                 )
             )
+
+            # Navele grele transmit un impact mai puternic ecranului.
+            # Scout-ul rămâne rapid, fără să întrerupă vizual lupta.
+            if enemy.enemy_type == "tank":
+                self._trigger_screen_shake(7, 12)
+            elif enemy.enemy_type == "fighter":
+                self._trigger_screen_shake(3, 6)
 
         self.explosion_sound.play()
 
