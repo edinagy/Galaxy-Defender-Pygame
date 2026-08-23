@@ -1,5 +1,6 @@
 import math
 import random
+from pathlib import Path
 
 import pygame
 
@@ -20,10 +21,19 @@ class Enemy:
         self.enemy_type = enemy_type
         self.difficulty_wave = max(1, int(difficulty_wave))
 
+        # Construiește căile pornind de la folderul jocului, astfel încât
+        # imaginile se încarcă bine indiferent de unde este pornit main.py.
+        enemies_folder = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "images"
+            / "enemies"
+        )
+
         if self.enemy_type == "elite":
             image_path = (
-                "assets/images/enemies/"
-                "enemy_alien_elite.png"
+                enemies_folder
+                / "enemy_alien_elite.png"
             )
             image_size = (250, 250)
             self.entry_speed = 4.8
@@ -37,9 +47,10 @@ class Enemy:
             self.decision_range = (110, 180)
 
         elif self.enemy_type == "scout":
-            image_path = (
-                "assets/images/enemies/"
-                "enemy_alien_scout.png"
+            image_path = self._choose_sprite(
+                enemies_folder,
+                "enemy_alien_scout_v2.png",
+                "enemy_alien_scout.png",
             )
             image_size = (150, 150)
             self.entry_speed = 3.6
@@ -49,9 +60,10 @@ class Enemy:
             self.decision_range = (55, 110)
 
         elif self.enemy_type == "tank":
-            image_path = (
-                "assets/images/enemies/"
-                "enemy_alien_tank.png"
+            image_path = self._choose_sprite(
+                enemies_folder,
+                "enemy_alien_tank_v2.png",
+                "enemy_alien_tank.png",
             )
             image_size = (240, 200)
             self.entry_speed = 1.5
@@ -61,9 +73,10 @@ class Enemy:
             self.decision_range = (150, 250)
 
         else:
-            image_path = (
-                "assets/images/enemies/"
-                "enemy_alien_fighter.png"
+            image_path = self._choose_sprite(
+                enemies_folder,
+                "enemy_alien_fighter_v2.png",
+                "enemy_alien_fighter.png",
             )
             image_size = (190, 190)
             self.entry_speed = 2.3
@@ -120,12 +133,24 @@ class Enemy:
         self.patrol_speed *= movement_multiplier
 
         loaded_image = pygame.image.load(
-            image_path
+            str(image_path)
         ).convert_alpha()
-        self.image = pygame.transform.smoothscale(
-            loaded_image,
-            image_size,
-        )
+
+        if self.enemy_type == "elite":
+            # Elita nu face parte din această schimbare vizuală.
+            self.image = pygame.transform.smoothscale(
+                loaded_image,
+                image_size,
+            )
+        else:
+            # Elimină spațiul transparent din fișier, păstrează proporțiile
+            # navei și o centrează pe o suprafață de aceeași dimensiune.
+            # Astfel sprite-ul este clar, iar dreptunghiul de coliziune rămâne
+            # identic cu cel folosit înainte de schimbarea imaginilor.
+            self.image = self._prepare_standard_sprite(
+                loaded_image,
+                image_size,
+            )
 
         self.max_health = self.health
         self.counts_toward_wave = self.enemy_type != "elite"
@@ -192,6 +217,55 @@ class Enemy:
             42,
             55 - self.difficulty_wave,
         )
+
+    # Folosește sprite-ul premium, dar permite revenirea automată la cel vechi
+    # dacă imaginea nouă nu a fost încă copiată în folderul proiectului.
+    @staticmethod
+    def _choose_sprite(folder, premium_name, fallback_name):
+        premium_path = folder / premium_name
+        if premium_path.exists():
+            return premium_path
+        return folder / fallback_name
+
+    # Decupează marginile complet transparente fără să deformeze nava.
+    @staticmethod
+    def _prepare_standard_sprite(loaded_image, canvas_size):
+        visible_bounds = loaded_image.get_bounding_rect(
+            min_alpha=8,
+        )
+
+        if visible_bounds.width > 0 and visible_bounds.height > 0:
+            visible_image = loaded_image.subsurface(
+                visible_bounds
+            ).copy()
+        else:
+            visible_image = loaded_image
+
+        scale_factor = min(
+            canvas_size[0] / visible_image.get_width(),
+            canvas_size[1] / visible_image.get_height(),
+        )
+        scaled_size = (
+            max(1, int(visible_image.get_width() * scale_factor)),
+            max(1, int(visible_image.get_height() * scale_factor)),
+        )
+        scaled_image = pygame.transform.smoothscale(
+            visible_image,
+            scaled_size,
+        )
+
+        sprite_canvas = pygame.Surface(
+            canvas_size,
+            pygame.SRCALPHA,
+        )
+        sprite_rect = scaled_image.get_rect(
+            center=sprite_canvas.get_rect().center,
+        )
+        sprite_canvas.blit(
+            scaled_image,
+            sprite_rect,
+        )
+        return sprite_canvas
 
     # Scalează pauza dintre atacuri fără să elimine ferestrele de evitare.
     def get_attack_delay(self, minimum_delay, maximum_delay):
