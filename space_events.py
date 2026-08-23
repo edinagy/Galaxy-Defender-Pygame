@@ -1,5 +1,6 @@
 import math
 import random
+from pathlib import Path
 
 import pygame
 
@@ -580,6 +581,23 @@ class GravityWaveEvent:
         self.direction = 1
         self.force_strength = 0.0
         self.animation_timer = 0
+        self.flow_particles = []
+        self._seed_flow_particles()
+
+    # Creează particulele care arată direcția curentului gravitațional.
+    def _seed_flow_particles(self):
+        self.flow_particles = []
+
+        for _ in range(104):
+            self.flow_particles.append(
+                [
+                    random.uniform(0, self.screen_width),
+                    random.uniform(115, self.screen_height - 25),
+                    random.uniform(0.35, 1.0),
+                    random.uniform(16, 48),
+                    random.uniform(0, math.tau),
+                ]
+            )
 
     # Pornește alarma și calculează puterea în funcție de wave.
     def start(self, wave):
@@ -595,12 +613,14 @@ class GravityWaveEvent:
             (-1, 1)
         )
         self.animation_timer = 0
+        self._seed_flow_particles()
 
     # Actualizează avertizarea, forța activă sau revenirea.
     def update(self, player_hitbox, wave):
         del player_hitbox
         del wave
         self.animation_timer += 1
+        self._update_visual_particles()
 
         if self.state == "warning":
             self.warning_timer -= 1
@@ -625,6 +645,54 @@ class GravityWaveEvent:
                 self.state = "finished"
 
         return False
+
+    # Deplasează fluxurile luminoase fără să influențeze mecanica evenimentului.
+    def _update_visual_particles(self):
+        if self.state == "active":
+            visual_speed = 7.0 + self.force_strength * 0.7
+        elif self.state == "warning":
+            visual_speed = 3.0
+        else:
+            visual_speed = 2.0
+
+        if self.direction_flash_timer > 20:
+            visual_speed *= 0.45
+
+        margin = 90
+
+        for particle in self.flow_particles:
+            particle[0] += (
+                self.direction
+                * visual_speed
+                * particle[2]
+            )
+            particle[1] += (
+                math.sin(
+                    self.animation_timer * 0.045
+                    + particle[4]
+                )
+                * 0.22
+                * particle[2]
+            )
+
+            if (
+                self.direction > 0
+                and particle[0] > self.screen_width + margin
+            ):
+                particle[0] = -margin
+                particle[1] = random.uniform(
+                    115,
+                    self.screen_height - 25,
+                )
+            elif (
+                self.direction < 0
+                and particle[0] < -margin
+            ):
+                particle[0] = self.screen_width + margin
+                particle[1] = random.uniform(
+                    115,
+                    self.screen_height - 25,
+                )
 
     # Schimbă direcția atracției la intervale regulate.
     def _update_active_phase(self):
@@ -716,7 +784,7 @@ class GravityWaveEvent:
                 (120, 230, 255),
             )
 
-    # Desenează unde sinusoidale și lumina de pe direcția atracției.
+    # Desenează curenți de particule, fronturi de distorsiune și lumină graduală.
     def _draw_space_distortion(self, screen):
         distortion_surface = pygame.Surface(
             (
@@ -726,87 +794,134 @@ class GravityWaveEvent:
             pygame.SRCALPHA,
         )
 
-        if self.state == "warning":
-            distortion_alpha = 45
-            wave_amplitude = 7
-        elif self.state == "active":
-            distortion_alpha = 105
-            wave_amplitude = 15
-        else:
-            distortion_alpha = 35
-            wave_amplitude = 5
+        tint_alpha = 30 if self.state == "active" else 15
+        distortion_surface.fill(
+            (28, 12, 78, tint_alpha),
+        )
 
-        for base_y in range(
-            155,
-            self.screen_height,
-            72,
-        ):
-            wave_points = []
+        # Particulele devin dâre mai lungi și mai luminoase în faza activă.
+        activity_multiplier = (
+            1.0 if self.state == "active" else 0.55
+        )
+        for particle in self.flow_particles:
+            depth = particle[2]
+            trail_length = (
+                particle[3]
+                * activity_multiplier
+            )
+            head_x = int(particle[0])
+            head_y = int(particle[1])
+            tail_x = int(
+                particle[0]
+                - self.direction * trail_length
+            )
+            alpha = int(
+                (45 + 125 * depth)
+                * activity_multiplier
+            )
+            streak_color = (
+                int(105 + 65 * depth),
+                int(145 + 75 * depth),
+                255,
+                alpha,
+            )
+            pygame.draw.line(
+                distortion_surface,
+                streak_color,
+                (tail_x, head_y),
+                (head_x, head_y),
+                max(1, int(depth * 3)),
+            )
+            pygame.draw.circle(
+                distortion_surface,
+                (205, 230, 255, min(220, alpha + 35)),
+                (head_x, head_y),
+                max(1, int(depth * 2)),
+            )
 
-            for x_position in range(
-                0,
-                self.screen_width + 25,
-                25,
-            ):
-                y_position = (
-                    base_y
-                    + math.sin(
-                        x_position * 0.018
-                        + self.animation_timer * 0.11
-                    )
-                    * wave_amplitude
-                )
-                wave_points.append(
+        # Trei fronturi verticale traversează arena și sugerează deformarea.
+        front_speed = 0.010 if self.state == "active" else 0.006
+        for front_index in range(3):
+            front_progress = (
+                self.animation_timer * front_speed
+                + front_index / 3
+            ) % 1.0
+            if self.direction < 0:
+                front_progress = 1.0 - front_progress
+
+            front_x = int(front_progress * self.screen_width)
+            front_points = []
+            for y_position in range(95, self.screen_height + 25, 20):
+                curve_offset = math.sin(
+                    y_position * 0.012
+                    + self.animation_timer * 0.025
+                    + front_index
+                ) * 24
+                front_points.append(
                     (
-                        x_position,
-                        int(y_position),
+                        int(front_x + curve_offset),
+                        y_position,
                     )
                 )
 
+            front_alpha = 34 if self.state == "active" else 18
             pygame.draw.lines(
                 distortion_surface,
-                (
-                    115,
-                    165,
-                    255,
-                    distortion_alpha,
-                ),
+                (115, 150, 255, front_alpha),
                 False,
-                wave_points,
-                2,
+                front_points,
+                2 if self.state == "active" else 1,
             )
-
-        tint_alpha = (
-            42 if self.state == "active" else 20
-        )
-        distortion_surface.fill(
-            (45, 20, 120, tint_alpha),
-            special_flags=pygame.BLEND_RGBA_ADD,
-        )
-
-        if self.state == "active":
-            edge_width = 105
-
-            if self.direction < 0:
-                edge_rect = pygame.Rect(
-                    0,
-                    0,
-                    edge_width,
-                    self.screen_height,
-                )
-            else:
-                edge_rect = pygame.Rect(
-                    self.screen_width - edge_width,
-                    0,
-                    edge_width,
-                    self.screen_height,
-                )
-
-            pygame.draw.rect(
+            pygame.draw.lines(
                 distortion_surface,
-                (90, 155, 255, 90),
-                edge_rect,
+                (205, 225, 255, front_alpha + 12),
+                False,
+                front_points,
+                1,
             )
+
+        # Atracția este accentuată gradual la marginea spre care curge arena.
+        if self.state == "active":
+            strip_width = 18
+            for strip_index in range(9):
+                if self.direction < 0:
+                    strip_x = strip_index * strip_width
+                else:
+                    strip_x = (
+                        self.screen_width
+                        - (strip_index + 1) * strip_width
+                    )
+                pygame.draw.rect(
+                    distortion_surface,
+                    (
+                        90,
+                        135,
+                        255,
+                        max(5, 48 - strip_index * 5),
+                    ),
+                    (
+                        strip_x,
+                        0,
+                        strip_width,
+                        self.screen_height,
+                    ),
+                )
+
+        # Schimbarea direcției produce un flash scurt și lizibil.
+        if self.direction_flash_timer > 20:
+            flash_alpha = int(
+                (self.direction_flash_timer - 20)
+                / 15
+                * 55
+            )
+            flash_surface = pygame.Surface(
+                (self.screen_width, self.screen_height),
+                pygame.SRCALPHA,
+            )
+            flash_surface.fill(
+                (115, 135, 255, flash_alpha)
+            )
+            distortion_surface.blit(flash_surface, (0, 0))
 
         screen.blit(
             distortion_surface,
@@ -1812,7 +1927,47 @@ class BlackHolePulseEvent:
             None,
             27,
         )
+        self.singularity_image = (
+            self._load_singularity_image()
+        )
         self.reset()
+
+    # Încarcă singularitatea premium și elimină marginile transparente.
+    def _load_singularity_image(self):
+        image_path = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "images"
+            / "effects"
+            / "black_hole_singularity.png"
+        )
+
+        if not image_path.exists():
+            return None
+
+        try:
+            singularity_image = pygame.image.load(
+                str(image_path)
+            ).convert_alpha()
+            visible_bounds = singularity_image.get_bounding_rect(
+                min_alpha=8
+            )
+            if (
+                visible_bounds.width > 0
+                and visible_bounds.height > 0
+            ):
+                singularity_image = singularity_image.subsurface(
+                    visible_bounds
+                ).copy()
+
+            # Redimensionarea se face o singură dată, nu în fiecare cadru.
+            return pygame.transform.smoothscale(
+                singularity_image,
+                (360, 360),
+            )
+        except pygame.error:
+            # Evenimentul rămâne funcțional și dacă imaginea lipsește.
+            return None
 
     # Readuce singularitatea în starea inactivă.
     def reset(self):
@@ -2031,7 +2186,7 @@ class BlackHolePulseEvent:
         )
         screen.blit(tint_surface, (0, 0))
 
-    # Desenează discul de acreție, particulele și event horizon-ul.
+    # Desenează sprite-ul rotativ, lensing-ul, particulele și impulsurile.
     def _draw_singularity(self, screen):
         effect_surface = pygame.Surface(
             (
@@ -2060,82 +2215,125 @@ class BlackHolePulseEvent:
         else:
             size_multiplier = 1.0
 
-        outer_radius = int(155 * size_multiplier)
-        disk_width = int(300 * size_multiplier)
-        disk_height = max(12, int(92 * size_multiplier))
+        pulse_scale = 1.0
+        if self.state == "active":
+            pulse_scale += math.sin(
+                self.pulse_elapsed
+                / BLACK_HOLE_PULSE_DURATION
+                * math.tau
+            ) * 0.035
 
+        visual_scale = size_multiplier * pulse_scale
+        glow_radius = max(8, int(184 * visual_scale))
+
+        # Halourile discrete integrează sprite-ul în fundalul arenei.
         pygame.draw.circle(
             effect_surface,
-            (105, 35, 190, 42),
+            (72, 35, 175, 28),
             (self.center_x, self.center_y),
-            outer_radius,
+            glow_radius,
+        )
+        pygame.draw.circle(
+            effect_surface,
+            (110, 70, 235, 34),
+            (self.center_x, self.center_y),
+            max(5, int(glow_radius * 0.76)),
+            max(1, int(7 * visual_scale)),
         )
 
-        # Particulele se rotesc spre centru și fac atracția ușor de observat.
-        for particle_index in range(30):
+        if self.singularity_image is not None:
+            rotation_angle = -(
+                self.animation_timer * 0.22
+            )
+            rotated_image = pygame.transform.rotozoom(
+                self.singularity_image,
+                rotation_angle,
+                visual_scale,
+            )
+
+            if self.state == "warning":
+                formation_progress = (
+                    1.0
+                    - self.warning_timer
+                    / BLACK_HOLE_WARNING_DURATION
+                )
+                rotated_image.set_alpha(
+                    int(95 + formation_progress * 160)
+                )
+            elif self.state == "recovery":
+                rotated_image.set_alpha(
+                    int(255 * size_multiplier)
+                )
+
+            effect_surface.blit(
+                rotated_image,
+                rotated_image.get_rect(
+                    center=(self.center_x, self.center_y)
+                ),
+            )
+        else:
+            # Variantă simplă de rezervă dacă PNG-ul nu poate fi încărcat.
+            pygame.draw.circle(
+                effect_surface,
+                (85, 45, 205, 175),
+                (self.center_x, self.center_y),
+                max(8, int(145 * visual_scale)),
+                max(2, int(16 * visual_scale)),
+            )
+
+        # Resturi luminoase orbitează în sensuri diferite spre centru.
+        for particle_index in range(18):
+            orbit_direction = 1 if particle_index % 2 == 0 else -1
             angle = (
-                particle_index * math.tau / 30
-                + self.animation_timer * 0.035
+                particle_index * math.tau / 18
+                + self.animation_timer
+                * 0.014
+                * orbit_direction
             )
             orbit_radius = (
-                82
-                + (particle_index % 7) * 10
-            ) * size_multiplier
+                126 + (particle_index % 4) * 15
+            ) * visual_scale
             particle_x = int(
                 self.center_x
                 + math.cos(angle) * orbit_radius
             )
             particle_y = int(
                 self.center_y
-                + math.sin(angle) * orbit_radius * 0.42
+                + math.sin(angle) * orbit_radius
             )
             particle_color = (
-                (255, 100, 210, 155)
-                if particle_index % 2 == 0
-                else (105, 155, 255, 145)
+                (255, 120, 235, 175)
+                if particle_index % 3 == 0
+                else (125, 185, 255, 155)
             )
             pygame.draw.circle(
                 effect_surface,
                 particle_color,
                 (particle_x, particle_y),
-                max(1, int(3 * size_multiplier)),
+                max(1, int(2.5 * visual_scale)),
             )
 
-        disk_rect = pygame.Rect(
-            self.center_x - disk_width // 2,
-            self.center_y - disk_height // 2,
-            disk_width,
-            disk_height,
+        # Centrul vizualizează separat absorbția și zona periculoasă.
+        absorption_visual_radius = max(
+            4,
+            int(self.absorption_radius * size_multiplier),
         )
-        pygame.draw.ellipse(
-            effect_surface,
-            (220, 70, 255, 165),
-            disk_rect,
-            max(2, int(7 * size_multiplier)),
-        )
-        inner_disk = disk_rect.inflate(
-            -max(4, int(48 * size_multiplier)),
-            -max(2, int(22 * size_multiplier)),
-        )
-        pygame.draw.ellipse(
-            effect_surface,
-            (80, 165, 255, 190),
-            inner_disk,
-            max(1, int(4 * size_multiplier)),
-        )
-
-        pygame.draw.circle(
-            effect_surface,
-            (2, 0, 7, 255),
-            (self.center_x, self.center_y),
-            max(4, int(self.horizon_radius * size_multiplier)),
+        horizon_visual_radius = max(
+            5,
+            int(self.horizon_radius * size_multiplier),
         )
         pygame.draw.circle(
             effect_surface,
-            (255, 80, 220, 220),
+            (0, 0, 4, 255),
             (self.center_x, self.center_y),
-            max(5, int(self.horizon_radius * size_multiplier)),
-            max(1, int(3 * size_multiplier)),
+            absorption_visual_radius,
+        )
+        pygame.draw.circle(
+            effect_surface,
+            (210, 105, 255, 205),
+            (self.center_x, self.center_y),
+            horizon_visual_radius,
+            max(1, int(2 * size_multiplier)),
         )
 
         # În faza puternică, un inel se extinde pentru fiecare impuls.
@@ -2158,6 +2356,16 @@ class BlackHolePulseEvent:
                 (self.center_x, self.center_y),
                 pulse_ring_radius,
                 3,
+            )
+            second_ring_radius = int(
+                125 + surge_progress * 205
+            )
+            pygame.draw.circle(
+                effect_surface,
+                (105, 175, 255, int(pulse_alpha * 0.62)),
+                (self.center_x, self.center_y),
+                second_ring_radius,
+                2,
             )
 
         screen.blit(effect_surface, (0, 0))
