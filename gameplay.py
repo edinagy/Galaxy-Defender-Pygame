@@ -15,7 +15,7 @@ from explosion import Explosion
 from hit_effect import HitEffect
 from homing_missile import HomingMissile
 from player import Player
-from powerups import PowerUp
+from powerups import PowerUp, PowerUpCollectEffect
 from space_events import SpaceEventManager
 from storm_asteroid import StormAsteroid
 from ui import draw_game_ui
@@ -130,6 +130,7 @@ class Gameplay:
         self.explosions = []
         self.powerups = []
         self.hit_effects = []
+        self.powerup_collect_effects = []
         self.allied_ships = []
         self.ally_bullets = []
         self.combat_drones = []
@@ -1762,6 +1763,7 @@ class Gameplay:
         self.storm_asteroids.clear()
         self.homing_missiles.clear()
         self.powerups.clear()
+        self.powerup_collect_effects.clear()
 
         self.boss = Boss(
             self.width,
@@ -1907,6 +1909,12 @@ class Gameplay:
 
             if effect.finished:
                 self.hit_effects.remove(effect)
+
+        for effect in self.powerup_collect_effects[:]:
+            effect.update()
+
+            if effect.finished:
+                self.powerup_collect_effects.remove(effect)
 
     def _remove_offscreen_objects(self):
         for bullet in self.bullets[:]:
@@ -2715,6 +2723,15 @@ class Gameplay:
                 else:
                     self.score += 500
 
+            # Energia obiectului se strânge vizibil în navă la colectare.
+            self.powerup_collect_effects.append(
+                PowerUpCollectEffect(
+                    powerup.rect.centerx,
+                    powerup.rect.centery,
+                    powerup.powerup_type,
+                )
+            )
+
             if powerup in self.powerups:
                 self.powerups.remove(powerup)
 
@@ -2787,6 +2804,9 @@ class Gameplay:
             explosion.draw(self.screen)
 
         for effect in self.hit_effects:
+            effect.draw(self.screen)
+
+        for effect in self.powerup_collect_effects:
             effect.draw(self.screen)
 
         # Evenimentele aparțin arenei, deci se mișcă împreună cu aceasta.
