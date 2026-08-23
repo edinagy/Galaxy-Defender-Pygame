@@ -1485,7 +1485,63 @@ class RadiationCloudEvent:
             None,
             24,
         )
+        self.cloud_images = self._load_cloud_images()
         self.reset()
+
+    # Încarcă cele trei variante premium și păstrează proporțiile originale.
+    def _load_cloud_images(self):
+        radiation_folder = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "images"
+            / "effects"
+            / "radiation"
+        )
+        filenames = (
+            "radiation_cloud_dense.png",
+            "radiation_cloud_wispy.png",
+            "radiation_cloud_diffuse.png",
+        )
+        cloud_images = []
+
+        for filename in filenames:
+            image_path = radiation_folder / filename
+            if not image_path.exists():
+                continue
+
+            try:
+                cloud_image = pygame.image.load(
+                    str(image_path)
+                ).convert_alpha()
+                visible_bounds = cloud_image.get_bounding_rect(
+                    min_alpha=8
+                )
+                if (
+                    visible_bounds.width > 0
+                    and visible_bounds.height > 0
+                ):
+                    cloud_image = cloud_image.subsurface(
+                        visible_bounds
+                    ).copy()
+
+                maximum_dimension = max(
+                    cloud_image.get_width(),
+                    cloud_image.get_height(),
+                )
+                image_scale = 360 / maximum_dimension
+                cloud_image = pygame.transform.smoothscale(
+                    cloud_image,
+                    (
+                        max(1, int(cloud_image.get_width() * image_scale)),
+                        max(1, int(cloud_image.get_height() * image_scale)),
+                    ),
+                )
+                cloud_images.append(cloud_image)
+            except pygame.error:
+                # Norii procedurali vechi rămân variantă de rezervă.
+                continue
+
+        return cloud_images
 
     # Readuce norul și bara de radiație la valorile inițiale.
     def reset(self):
@@ -1602,6 +1658,27 @@ class RadiationCloudEvent:
                 155,
                 self.screen_height - 105,
             )
+            cloud_sprite = None
+            if self.cloud_images:
+                base_image = self.cloud_images[
+                    cloud_index % len(self.cloud_images)
+                ]
+                cloud_sprite = pygame.transform.rotozoom(
+                    base_image,
+                    random.uniform(0, 360),
+                    random.uniform(0.92, 1.08),
+                )
+                sprite_bounds = cloud_sprite.get_bounding_rect(
+                    min_alpha=8
+                )
+                if (
+                    sprite_bounds.width > 0
+                    and sprite_bounds.height > 0
+                ):
+                    cloud_sprite = cloud_sprite.subsurface(
+                        sprite_bounds
+                    ).copy()
+
             self.clouds.append(
                 {
                     "x": float(cloud_x),
@@ -1610,6 +1687,9 @@ class RadiationCloudEvent:
                     "radius": radius,
                     "speed": random.uniform(1.05, 1.65),
                     "phase": random.uniform(0, math.tau),
+                    "pulse_speed": random.uniform(0.012, 0.022),
+                    "visual_scale": random.uniform(0.94, 1.08),
+                    "sprite": cloud_sprite,
                 }
             )
 
@@ -1665,6 +1745,9 @@ class RadiationCloudEvent:
 
         self._draw_clouds(screen)
 
+        if self.player_exposed and self.state == "active":
+            self._draw_contamination_feedback(screen)
+
         if self.state == "warning":
             seconds_remaining = max(
                 1,
@@ -1702,7 +1785,7 @@ class RadiationCloudEvent:
             )
             self._draw_exposure_bar(screen)
 
-    # Desenează fiecare nor din mai multe cercuri translucide.
+    # Desenează sprite-urile organice, pulsația și particulele radioactive.
     def _draw_clouds(self, screen):
         cloud_surface = pygame.Surface(
             (
@@ -1728,66 +1811,172 @@ class RadiationCloudEvent:
                 25,
                 65,
                 20,
-                int(18 * alpha_multiplier),
+                int(9 * alpha_multiplier),
             )
         )
-        cloud_offsets = [
-            (-0.42, 0.03, 0.58),
-            (-0.18, -0.25, 0.67),
-            (0.10, 0.18, 0.72),
-            (0.36, -0.10, 0.56),
-            (0.02, -0.02, 0.88),
-        ]
 
         for cloud in self.clouds:
             radius = cloud["radius"]
-
-            for offset_x, offset_y, size in cloud_offsets:
-                circle_center = (
-                    int(cloud["x"] + radius * offset_x),
-                    int(cloud["y"] + radius * offset_y),
+            pulse = (
+                1.0
+                + math.sin(
+                    self.animation_timer * cloud["pulse_speed"]
+                    + cloud["phase"]
                 )
-                circle_radius = int(radius * size)
+                * 0.035
+            )
+            visual_diameter = int(
+                radius
+                * 2.18
+                * cloud["visual_scale"]
+                * pulse
+            )
+            cloud_sprite = cloud["sprite"]
+
+            if cloud_sprite is not None:
+                sprite_scale = (
+                    visual_diameter
+                    / max(
+                        cloud_sprite.get_width(),
+                        cloud_sprite.get_height(),
+                    )
+                )
+                draw_width = max(
+                    1,
+                    int(cloud_sprite.get_width() * sprite_scale),
+                )
+                draw_height = max(
+                    1,
+                    int(cloud_sprite.get_height() * sprite_scale),
+                )
+                draw_image = pygame.transform.smoothscale(
+                    cloud_sprite,
+                    (draw_width, draw_height),
+                )
+                draw_image.set_alpha(
+                    int(132 * alpha_multiplier)
+                )
+                cloud_surface.blit(
+                    draw_image,
+                    draw_image.get_rect(
+                        center=(
+                            int(cloud["x"]),
+                            int(cloud["y"]),
+                        )
+                    ),
+                )
+            else:
+                # Rezervă simplă dacă niciun PNG nu este disponibil.
                 pygame.draw.circle(
                     cloud_surface,
                     (
-                        70,
-                        145,
-                        45,
+                        85,
+                        150,
+                        50,
                         int(42 * alpha_multiplier),
                     ),
-                    circle_center,
-                    circle_radius,
+                    (int(cloud["x"]), int(cloud["y"])),
+                    radius,
+                )
+
+            # Motele din interior fac norul să pară activ, fără contur circular.
+            for mote_index in range(9):
+                mote_angle = (
+                    cloud["phase"]
+                    + mote_index * math.tau / 9
+                    + self.animation_timer * 0.006
+                )
+                mote_distance = radius * (
+                    0.20 + (mote_index % 4) * 0.15
+                )
+                mote_x = int(
+                    cloud["x"]
+                    + math.cos(mote_angle) * mote_distance
+                )
+                mote_y = int(
+                    cloud["y"]
+                    + math.sin(mote_angle * 1.3)
+                    * mote_distance
+                    * 0.72
+                )
+                mote_alpha = int(
+                    (55 + (mote_index % 3) * 25)
+                    * alpha_multiplier
                 )
                 pygame.draw.circle(
                     cloud_surface,
-                    (
-                        145,
-                        70,
-                        175,
-                        int(32 * alpha_multiplier),
-                    ),
-                    circle_center,
-                    max(1, int(circle_radius * 0.72)),
+                    (175, 255, 80, mote_alpha),
+                    (mote_x, mote_y),
+                    1 + mote_index % 2,
                 )
 
-            pygame.draw.circle(
-                cloud_surface,
+        screen.blit(cloud_surface, (0, 0))
+
+    # Semnalizează contaminarea prin vignette și interferențe discrete.
+    def _draw_contamination_feedback(self, screen):
+        feedback_surface = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        exposure_ratio = min(
+            1.0,
+            self.exposure / MAX_RADIATION_EXPOSURE,
+        )
+
+        # Straturile de la margine formează o vignette, nu un chenar solid.
+        for layer_index in range(10):
+            layer_alpha = int(
+                (18 + exposure_ratio * 32)
+                * (1.0 - layer_index / 10) ** 2
+            )
+            inset = layer_index * 9
+            pygame.draw.rect(
+                feedback_surface,
+                (90, 230, 55, layer_alpha),
                 (
-                    180,
-                    255,
-                    95,
-                    int(70 * alpha_multiplier),
+                    inset,
+                    inset,
+                    self.screen_width - inset * 2,
+                    self.screen_height - inset * 2,
                 ),
-                (
-                    int(cloud["x"]),
-                    int(cloud["y"]),
-                ),
-                int(radius * 0.78),
-                2,
+                10,
             )
 
-        screen.blit(cloud_surface, (0, 0))
+        # Linii fine, deplasate în timp, sugerează interferența senzorilor.
+        scan_offset = self.animation_timer % 22
+        scan_alpha = int(7 + exposure_ratio * 12)
+        for scan_y in range(
+            scan_offset,
+            self.screen_height,
+            22,
+        ):
+            pygame.draw.line(
+                feedback_surface,
+                (160, 255, 105, scan_alpha),
+                (0, scan_y),
+                (self.screen_width, scan_y),
+                1,
+            )
+
+        # Fragmentele scurte apar doar în expunere și nu ascund proiectilele.
+        for fragment_index in range(12):
+            fragment_x = (
+                fragment_index * 109
+                + self.animation_timer * 3
+            ) % self.screen_width
+            fragment_y = (
+                fragment_index * 71
+                + self.animation_timer
+            ) % self.screen_height
+            pygame.draw.line(
+                feedback_surface,
+                (190, 255, 120, int(20 + exposure_ratio * 35)),
+                (fragment_x, fragment_y),
+                (fragment_x + 8 + fragment_index % 9, fragment_y),
+                1,
+            )
+
+        screen.blit(feedback_surface, (0, 0))
 
     # Afișează numeric și vizual expunerea acumulată.
     def _draw_exposure_bar(self, screen):
