@@ -298,6 +298,10 @@ class GalaxyDefender:
         self.leaderboard_animation_duration = 64
         self.pause_animation_timer = 0
         self.pause_animation_duration = 48
+        self.settings_animation_timer = 0
+        self.settings_animation_duration = 52
+        self.settings_saved_feedback_timer = 0
+        self.active_settings_slider = None
 
         self._create_buttons()
 
@@ -465,52 +469,64 @@ class GalaxyDefender:
         )
 
         self.music_minus_button = pygame.Rect(
-            370,
-            240,
-            60,
-            50,
+            160,
+            303,
+            42,
+            42,
         )
         self.music_plus_button = pygame.Rect(
-            850,
-            240,
-            60,
-            50,
+            550,
+            303,
+            42,
+            42,
         )
         self.sound_minus_button = pygame.Rect(
-            370,
-            335,
-            60,
-            50,
+            160,
+            408,
+            42,
+            42,
         )
         self.sound_plus_button = pygame.Rect(
-            850,
-            335,
-            60,
-            50,
+            550,
+            408,
+            42,
+            42,
+        )
+        self.music_slider_rect = pygame.Rect(
+            215,
+            315,
+            320,
+            18,
+        )
+        self.sound_slider_rect = pygame.Rect(
+            215,
+            420,
+            320,
+            18,
         )
         self.resolution_minus_button = pygame.Rect(
-            370,
-            430,
-            60,
-            50,
+            690,
+            303,
+            48,
+            48,
         )
         self.resolution_plus_button = pygame.Rect(
-            850,
-            430,
-            60,
-            50,
+            1062,
+            303,
+            48,
+            48,
         )
         self.fullscreen_button = pygame.Rect(
-            500,
-            500,
-            280,
-            55,
+            965,
+            386,
+            130,
+            44,
         )
         self.settings_back_button = pygame.Rect(
-            500,
-            570,
-            280,
-            55,
+            470,
+            625,
+            340,
+            50,
         )
 
     # Citește scorurile din leaderboard.txt și păstrează primele zece rezultate.
@@ -887,6 +903,32 @@ class GalaxyDefender:
 
             return
 
+        if current_scene == SceneManager.SETTINGS:
+            if (
+                event.type == pygame.MOUSEMOTION
+                and self.active_settings_slider is not None
+            ):
+                logical_position = self._to_game_position(event.pos)
+                self._set_settings_slider_from_position(
+                    self.active_settings_slider,
+                    logical_position[0],
+                )
+                return
+
+            if (
+                event.type == pygame.MOUSEBUTTONUP
+                and event.button == 1
+                and self.active_settings_slider is not None
+            ):
+                logical_position = self._to_game_position(event.pos)
+                self._set_settings_slider_from_position(
+                    self.active_settings_slider,
+                    logical_position[0],
+                )
+                self.active_settings_slider = None
+                self._save_current_settings()
+                return
+
         if event.type == pygame.KEYDOWN:
             if (
                 current_scene == SceneManager.MENU
@@ -953,6 +995,12 @@ class GalaxyDefender:
             SceneManager.LEADERBOARD,
             SceneManager.SETTINGS,
         ):
+            if (
+                current_scene == SceneManager.SETTINGS
+                and self.active_settings_slider is not None
+            ):
+                self.active_settings_slider = None
+                self._save_current_settings()
             self.scene_manager.go_back()
 
     # Direcționează clickul către meniul, pauza sau setările active.
@@ -1059,12 +1107,53 @@ class GalaxyDefender:
                 SceneManager.MENU
             )
 
+    # Transformă poziția mouse-ului într-o valoare de volum între 0 și 100%.
+    def _set_settings_slider_from_position(
+        self,
+        slider_name,
+        mouse_x,
+    ):
+        slider_rect = (
+            self.music_slider_rect
+            if slider_name == "music"
+            else self.sound_slider_rect
+        )
+        slider_value = max(
+            0.0,
+            min(
+                1.0,
+                (mouse_x - slider_rect.x) / slider_rect.width,
+            ),
+        )
+
+        if slider_name == "music":
+            self.music_volume = slider_value
+            pygame.mixer.music.set_volume(self.music_volume)
+            self.gameplay.sync_boss_music_volume()
+        else:
+            self.sound_volume = slider_value
+            self._apply_sound_volume()
+
     # Modifică volumul, fullscreen-ul sau revine la scena anterioară.
     def _handle_settings_click(
         self,
         mouse_position,
     ):
-        if self.music_minus_button.collidepoint(
+        if self.music_slider_rect.collidepoint(mouse_position):
+            self.active_settings_slider = "music"
+            self._set_settings_slider_from_position(
+                "music",
+                mouse_position[0],
+            )
+
+        elif self.sound_slider_rect.collidepoint(mouse_position):
+            self.active_settings_slider = "sound"
+            self._set_settings_slider_from_position(
+                "sound",
+                mouse_position[0],
+            )
+
+        elif self.music_minus_button.collidepoint(
             mouse_position
         ):
             self.music_volume = max(
@@ -1128,6 +1217,7 @@ class GalaxyDefender:
         elif self.settings_back_button.collidepoint(
             mouse_position
         ):
+            self.active_settings_slider = None
             self.scene_manager.go_back()
 
     # Resetează lupta și păstrează scorul câștigat în campanie.
@@ -1342,6 +1432,7 @@ class GalaxyDefender:
             self.fullscreen,
             self.selected_resolution,
         )
+        self.settings_saved_feedback_timer = 90
 
     # Trimite cadrul logic către fereastra controlată de DisplayManager.
     def _present_frame(self):
@@ -1413,6 +1504,14 @@ class GalaxyDefender:
                 self.pause_animation_duration,
                 self.pause_animation_timer + 1,
             )
+
+        elif current_scene == SceneManager.SETTINGS:
+            self.settings_animation_timer = min(
+                self.settings_animation_duration,
+                self.settings_animation_timer + 1,
+            )
+            if self.settings_saved_feedback_timer > 0:
+                self.settings_saved_feedback_timer -= 1
 
         elif current_scene == SceneManager.PLANET:
             planet_action = (
@@ -1486,6 +1585,10 @@ class GalaxyDefender:
 
         if current_scene != SceneManager.PAUSE:
             self.pause_animation_timer = 0
+
+        if current_scene != SceneManager.SETTINGS:
+            self.settings_animation_timer = 0
+            self.active_settings_slider = None
 
         # Scenele se pot schimba in timpul update-ului; muzica se sincronizeaza dupa.
         self._sync_scene_music()
@@ -4164,118 +4267,529 @@ class GalaxyDefender:
             ),
         )
 
-    # Desenează valorile și butoanele disponibile în meniul Settings.
-    def _draw_settings(self):
-        self._draw_secondary_screen_frame(
-            "SETTINGS",
-            "SYSTEM CONFIGURATION  //  PILOT PREFERENCES",
+    # Desenează un slider care poate fi apăsat sau tras cu mouse-ul.
+    def _draw_settings_slider(
+        self,
+        slider_rect,
+        value,
+        slider_name,
+        mouse_position,
+        visibility,
+    ):
+        hovered = slider_rect.inflate(0, 18).collidepoint(
+            mouse_position
+        )
+        active = self.active_settings_slider == slider_name
+        accent = (75, 215, 255) if slider_name == "music" else (155, 115, 245)
+
+        pygame.draw.rect(
+            self.screen,
+            (10, 28, 51),
+            slider_rect,
+            border_radius=9,
+        )
+        pygame.draw.rect(
+            self.screen,
+            (52, 92, 125),
+            slider_rect,
+            1,
+            border_radius=9,
+        )
+        fill_width = int(slider_rect.width * max(0.0, min(1.0, value)))
+        if fill_width > 0:
+            pygame.draw.rect(
+                self.screen,
+                accent,
+                pygame.Rect(
+                    slider_rect.x,
+                    slider_rect.y,
+                    fill_width,
+                    slider_rect.height,
+                ),
+                border_radius=9,
+            )
+
+        for tick_index in range(1, 10):
+            tick_x = slider_rect.x + int(
+                slider_rect.width * tick_index / 10
+            )
+            pygame.draw.line(
+                self.screen,
+                (160, 220, 240) if tick_x <= slider_rect.x + fill_width else (45, 75, 105),
+                (tick_x, slider_rect.y + 5),
+                (tick_x, slider_rect.bottom - 5),
+                1,
+            )
+
+        knob_x = slider_rect.x + fill_width
+        if active or hovered:
+            pygame.draw.circle(
+                self.screen,
+                (*accent, int(55 * visibility)),
+                (knob_x, slider_rect.centery),
+                15,
+            )
+        pygame.draw.circle(
+            self.screen,
+            (235, 250, 255),
+            (knob_x, slider_rect.centery),
+            8 if (active or hovered) else 7,
+        )
+        pygame.draw.circle(
+            self.screen,
+            accent,
+            (knob_x, slider_rect.centery),
+            8 if (active or hovered) else 7,
+            2,
         )
 
-        panel_rect = pygame.Rect(330, 175, 620, 485)
-        self._draw_glass_panel(panel_rect)
-
-        music_text = self.menu_subtitle_font.render(
-            "MUSIC VOLUME",
+    # Desenează butoanele compacte pentru volum și schimbarea rezoluției.
+    def _draw_settings_step_button(
+        self,
+        button_rect,
+        symbol,
+        mouse_position,
+        accent_color,
+        visibility,
+    ):
+        hovered = button_rect.collidepoint(mouse_position)
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button,
+            (*accent_color, int(95 * visibility))
+            if hovered
+            else (7, 20, 42, int(220 * visibility)),
+            button.get_rect(),
+            border_radius=9,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent_color, int((230 if hovered else 135) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=9,
+        )
+        symbol_surface = self.menu_subtitle_font.render(
+            symbol,
             True,
-            (205, 222, 242),
+            (240, 250, 255),
         )
-        self.screen.blit(
-            music_text,
-            (455, 252),
-        )
-
-        sound_text = self.menu_subtitle_font.render(
-            "SOUND EFFECTS",
-            True,
-            (205, 222, 242),
-        )
-        self.screen.blit(
-            sound_text,
-            (455, 347),
-        )
-
-        # Barele oferă feedback vizual imediat pentru nivelul volumului.
-        self._draw_volume_bar(
-            pygame.Rect(595, 253, 225, 20),
-            self.music_volume,
-        )
-        self._draw_volume_bar(
-            pygame.Rect(595, 348, 225, 20),
-            self.sound_volume,
-        )
-
-        music_value = self.menu_label_font.render(
-            f"{round(self.music_volume * 100):03d}%",
-            True,
-            (105, 220, 255),
-        )
-        sound_value = self.menu_label_font.render(
-            f"{round(self.sound_volume * 100):03d}%",
-            True,
-            (105, 220, 255),
-        )
-        self.screen.blit(music_value, (742, 280))
-        self.screen.blit(sound_value, (742, 375))
-
-        resolution_text = self.menu_subtitle_font.render(
-            "DISPLAY RESOLUTION",
-            True,
-            (205, 222, 242),
-        )
-        self.screen.blit(
-            resolution_text,
+        symbol_surface.set_alpha(int(255 * visibility))
+        button.blit(
+            symbol_surface,
             (
-                self.width // 2
-                - resolution_text.get_width() // 2,
-                405,
+                button_rect.width // 2 - symbol_surface.get_width() // 2,
+                button_rect.height // 2 - symbol_surface.get_height() // 2,
             ),
         )
+        self.screen.blit(button, button_rect.topleft)
 
-        resolution_value = self.menu_label_font.render(
+    # Desenează comutatorul vizual pentru modul fullscreen.
+    def _draw_settings_fullscreen_toggle(
+        self,
+        visibility,
+        mouse_position,
+    ):
+        toggle_rect = self.fullscreen_button
+        hovered = toggle_rect.collidepoint(mouse_position)
+        accent = (80, 220, 180) if self.fullscreen else (105, 135, 170)
+        toggle = pygame.Surface(toggle_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            toggle,
+            (*accent, int((105 if hovered else 65) * visibility)),
+            toggle.get_rect(),
+            border_radius=22,
+        )
+        pygame.draw.rect(
+            toggle,
+            (*accent, int((235 if hovered else 165) * visibility)),
+            toggle.get_rect(),
+            2,
+            border_radius=22,
+        )
+        knob_x = toggle_rect.width - 23 if self.fullscreen else 23
+        pygame.draw.circle(
+            toggle,
+            (235, 250, 255, int(255 * visibility)),
+            (knob_x, toggle_rect.height // 2),
+            16,
+        )
+        state = self.menu_micro_font.render(
+            "ON" if self.fullscreen else "OFF",
+            True,
+            (230, 250, 245) if self.fullscreen else (165, 185, 208),
+        )
+        state.set_alpha(int(255 * visibility))
+        state_x = 17 if self.fullscreen else toggle_rect.width - state.get_width() - 15
+        toggle.blit(
+            state,
+            (
+                state_x,
+                toggle_rect.height // 2 - state.get_height() // 2,
+            ),
+        )
+        self.screen.blit(toggle, toggle_rect.topleft)
+
+    # Desenează butonul care revine la ecranul din care au fost deschise setările.
+    def _draw_settings_back_button(self, visibility, mouse_position):
+        button_rect = self.settings_back_button
+        hovered = button_rect.collidepoint(mouse_position)
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button,
+            (12, 75, 108, int(240 * visibility))
+            if hovered
+            else (7, 24, 49, int(225 * visibility)),
+            button.get_rect(),
+            border_radius=10,
+        )
+        pygame.draw.rect(
+            button,
+            (90, 220, 255, int((235 if hovered else 150) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=10,
+        )
+        pygame.draw.line(
+            button,
+            (90, 220, 255),
+            (10, button_rect.height // 2),
+            (20, button_rect.height // 2 - 8),
+            2,
+        )
+        pygame.draw.line(
+            button,
+            (90, 220, 255),
+            (10, button_rect.height // 2),
+            (20, button_rect.height // 2 + 8),
+            2,
+        )
+        label = self.menu_subtitle_font.render(
+            "RETURN TO PREVIOUS SCREEN",
+            True,
+            (235, 248, 255),
+        )
+        label.set_alpha(int(255 * visibility))
+        button.blit(
+            label,
+            (
+                button_rect.width // 2 - label.get_width() // 2,
+                button_rect.height // 2 - label.get_height() // 2,
+            ),
+        )
+        self.screen.blit(button, button_rect.topleft)
+
+    # Desenează configurația audio, video și comenzile pilotului.
+    def _draw_settings(self):
+        self._draw_secondary_screen_frame(
+            "SYSTEM CONFIGURATION",
+            "GALACTIC DEFENSE COMMAND  //  PILOT PREFERENCES",
+        )
+
+        visibility = min(
+            1.0,
+            self.settings_animation_timer / 28,
+        )
+        content_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.settings_animation_timer - 4) / 24,
+            ),
+        )
+        panel_rect = pygame.Rect(110, 188, 1060, 418)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (4, 10, 28, int(235 * visibility)),
+            panel.get_rect(),
+            border_radius=18,
+        )
+        pygame.draw.rect(
+            panel,
+            (75, 205, 255, int(155 * visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=18,
+        )
+        pygame.draw.line(
+            panel,
+            (75, 215, 255, int(225 * visibility)),
+            (24, 1),
+            (panel_rect.width - 24, 1),
+            3,
+        )
+        self.screen.blit(panel, panel_rect.topleft)
+
+        audio_rect = pygame.Rect(140, 218, 480, 305)
+        display_rect = pygame.Rect(660, 218, 480, 305)
+        for card_rect, accent in (
+            (audio_rect, (75, 205, 255)),
+            (display_rect, (155, 115, 245)),
+        ):
+            card = pygame.Surface(card_rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(
+                card,
+                (6, 17, 37, int(220 * content_visibility)),
+                card.get_rect(),
+                border_radius=14,
+            )
+            pygame.draw.rect(
+                card,
+                (*accent, int(115 * content_visibility)),
+                card.get_rect(),
+                1,
+                border_radius=14,
+            )
+            self.screen.blit(card, card_rect.topleft)
+
+        mouse_position = self._get_mouse_position()
+        audio_header = self.menu_label_font.render(
+            "AUDIO SYSTEMS",
+            True,
+            (105, 215, 255),
+        )
+        display_header = self.menu_label_font.render(
+            "DISPLAY SYSTEMS",
+            True,
+            (180, 150, 245),
+        )
+        audio_header.set_alpha(int(255 * content_visibility))
+        display_header.set_alpha(int(255 * content_visibility))
+        self.screen.blit(audio_header, (160, 238))
+        self.screen.blit(display_header, (680, 238))
+
+        audio_controls = (
+            (
+                "MUSIC OUTPUT",
+                self.music_volume,
+                self.music_slider_rect,
+                "music",
+                self.music_minus_button,
+                self.music_plus_button,
+                274,
+                (75, 215, 255),
+            ),
+            (
+                "COMBAT EFFECTS",
+                self.sound_volume,
+                self.sound_slider_rect,
+                "sound",
+                self.sound_minus_button,
+                self.sound_plus_button,
+                379,
+                (155, 115, 245),
+            ),
+        )
+        for (
+            label,
+            value,
+            slider_rect,
+            slider_name,
+            minus_button,
+            plus_button,
+            label_y,
+            accent,
+        ) in audio_controls:
+            label_surface = self.menu_subtitle_font.render(
+                label,
+                True,
+                (205, 225, 242),
+            )
+            value_surface = self.menu_label_font.render(
+                f"{round(value * 100):03d}%",
+                True,
+                accent,
+            )
+            label_surface.set_alpha(int(255 * content_visibility))
+            value_surface.set_alpha(int(255 * content_visibility))
+            self.screen.blit(label_surface, (160, label_y))
+            self.screen.blit(
+                value_surface,
+                (592 - value_surface.get_width(), label_y + 3),
+            )
+            self._draw_settings_slider(
+                slider_rect,
+                value,
+                slider_name,
+                mouse_position,
+                content_visibility,
+            )
+            self._draw_settings_step_button(
+                minus_button,
+                "-",
+                mouse_position,
+                accent,
+                content_visibility,
+            )
+            self._draw_settings_step_button(
+                plus_button,
+                "+",
+                mouse_position,
+                accent,
+                content_visibility,
+            )
+
+        if self.active_settings_slider is not None:
+            save_status_text = "ADJUSTING OUTPUT  //  RELEASE TO SAVE"
+            save_status_color = (255, 190, 90)
+        elif self.settings_saved_feedback_timer > 0:
+            save_status_text = "CONFIGURATION SAVED  //  PILOT PROFILE UPDATED"
+            save_status_color = (80, 225, 175)
+        else:
+            save_status_text = "AUTO SAVE LINK  //  READY"
+            save_status_color = (90, 155, 190)
+        save_status = self.menu_micro_font.render(
+            save_status_text,
+            True,
+            save_status_color,
+        )
+        save_status.set_alpha(int(255 * content_visibility))
+        self.screen.blit(
+            save_status,
+            (audio_rect.centerx - save_status.get_width() // 2, 488),
+        )
+
+        resolution_label = self.menu_subtitle_font.render(
+            "OUTPUT RESOLUTION",
+            True,
+            (205, 225, 242),
+        )
+        resolution_value = self.pause_value_font.render(
             self.display_manager.get_resolution_label(),
             True,
-            (105, 220, 255),
+            (185, 160, 255),
         )
+        resolution_label.set_alpha(int(255 * content_visibility))
+        resolution_value.set_alpha(int(255 * content_visibility))
+        self.screen.blit(resolution_label, (680, 274))
         self.screen.blit(
             resolution_value,
             (
-                self.width // 2
-                - resolution_value.get_width() // 2,
-                450,
+                display_rect.centerx - resolution_value.get_width() // 2,
+                310,
             ),
         )
+        self._draw_settings_step_button(
+            self.resolution_minus_button,
+            "<",
+            mouse_position,
+            (155, 115, 245),
+            content_visibility,
+        )
+        self._draw_settings_step_button(
+            self.resolution_plus_button,
+            ">",
+            mouse_position,
+            (155, 115, 245),
+            content_visibility,
+        )
 
-        settings_buttons = [
-            (self.music_minus_button, "-"),
-            (self.music_plus_button, "+"),
-            (self.sound_minus_button, "-"),
-            (self.sound_plus_button, "+"),
-            (self.resolution_minus_button, "<"),
-            (self.resolution_plus_button, ">"),
-            (
-                self.fullscreen_button,
-                (
-                    "FULLSCREEN  //  ON"
-                    if self.fullscreen
-                    else "FULLSCREEN  //  OFF"
-                ),
-            ),
-            (self.settings_back_button, "BACK"),
-        ]
+        fullscreen_label = self.menu_subtitle_font.render(
+            "FULLSCREEN MODE",
+            True,
+            (205, 225, 242),
+        )
+        fullscreen_label.set_alpha(int(255 * content_visibility))
+        self.screen.blit(fullscreen_label, (680, 394))
+        self._draw_settings_fullscreen_toggle(
+            content_visibility,
+            mouse_position,
+        )
 
-        mouse_position = self._get_mouse_position()
-
-        for button_rect, button_text in (
-            settings_buttons
-        ):
-            self._draw_button(
-                button_rect,
-                button_text,
-                mouse_position,
-                animated=(button_rect.width > 100),
+        display_details = (
+            "LOGICAL CANVAS  //  1280 x 720",
+            "ADAPTIVE SCALING  //  ENABLED",
+            "RENDERER MODE  //  SAFE COMPATIBILITY",
+        )
+        for detail_index, detail_text in enumerate(display_details):
+            detail_surface = self.menu_micro_font.render(
+                detail_text,
+                True,
+                (105, 135, 170),
+            )
+            detail_surface.set_alpha(int(255 * content_visibility))
+            self.screen.blit(
+                detail_surface,
+                (680, 452 + detail_index * 20),
             )
 
-        self._draw_back_hint()
+        controls_rect = pygame.Rect(140, 538, 1000, 50)
+        controls = pygame.Surface(controls_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            controls,
+            (6, 17, 37, int(215 * content_visibility)),
+            controls.get_rect(),
+            border_radius=11,
+        )
+        pygame.draw.rect(
+            controls,
+            (65, 145, 190, int(105 * content_visibility)),
+            controls.get_rect(),
+            1,
+            border_radius=11,
+        )
+        self.screen.blit(controls, controls_rect.topleft)
+        control_definitions = (
+            ("WASD / ARROWS", "MOVE"),
+            ("SPACE", "FIRE"),
+            ("E", "ENERGY PULSE"),
+            ("ESC", "PAUSE / BACK"),
+        )
+        control_width = controls_rect.width // len(control_definitions)
+        for control_index, (key_text, action_text) in enumerate(
+            control_definitions
+        ):
+            center_x = (
+                controls_rect.x
+                + control_index * control_width
+                + control_width // 2
+            )
+            key_surface = self.menu_label_font.render(
+                key_text,
+                True,
+                (105, 215, 255),
+            )
+            action_surface = self.menu_micro_font.render(
+                action_text,
+                True,
+                (110, 135, 165),
+            )
+            key_surface.set_alpha(int(255 * content_visibility))
+            action_surface.set_alpha(int(255 * content_visibility))
+            self.screen.blit(
+                key_surface,
+                (center_x - key_surface.get_width() // 2, 546),
+            )
+            self.screen.blit(
+                action_surface,
+                (center_x - action_surface.get_width() // 2, 569),
+            )
+
+        back_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.settings_animation_timer - 20) / 18,
+            ),
+        )
+        self._draw_settings_back_button(
+            back_visibility,
+            mouse_position,
+        )
+        back_hint = self.menu_micro_font.render(
+            "ESC  //  RETURN TO PREVIOUS SCREEN",
+            True,
+            (90, 115, 148),
+        )
+        back_hint.set_alpha(int(255 * back_visibility))
+        self.screen.blit(
+            back_hint,
+            (
+                self.width // 2 - back_hint.get_width() // 2,
+                683,
+            ),
+        )
 
     # Desenează umplerea unei bare de volum între 0% și 100%.
     def _draw_volume_bar(self, bar_rect, value):
