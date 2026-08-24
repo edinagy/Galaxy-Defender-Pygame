@@ -93,6 +93,9 @@ class GalaxyDefender:
         self.menu_subtitle_font = pygame.font.Font(None, 27)
         self.menu_micro_font = pygame.font.Font(None, 16)
         self.menu_protocol_font = pygame.font.Font(None, 19)
+        self.archive_score_font = pygame.font.Font(None, 43)
+        self.archive_rank_font = pygame.font.Font(None, 29)
+        self.archive_row_font = pygame.font.Font(None, 23)
         self.title_font = pygame.font.Font(
             None,
             100,
@@ -289,6 +292,8 @@ class GalaxyDefender:
         self.confirm_new_game = False
         self.confirm_new_game_timer = 0
         self.confirm_new_game_animation_duration = 36
+        self.leaderboard_animation_timer = 0
+        self.leaderboard_animation_duration = 64
 
         self._create_buttons()
 
@@ -428,6 +433,12 @@ class GalaxyDefender:
             455,
             310,
             62,
+        )
+        self.leaderboard_back_button = pygame.Rect(
+            470,
+            625,
+            340,
+            50,
         )
 
         self.resume_button = pygame.Rect(
@@ -895,6 +906,15 @@ class GalaxyDefender:
 
             if (
                 event.key == pygame.K_RETURN
+                and current_scene == SceneManager.LEADERBOARD
+            ):
+                self.scene_manager.change_scene(
+                    SceneManager.MENU
+                )
+                return
+
+            if (
+                event.key == pygame.K_RETURN
                 and current_scene == SceneManager.MENU
             ):
                 if (
@@ -947,6 +967,14 @@ class GalaxyDefender:
             self._handle_settings_click(
                 mouse_position
             )
+
+        elif current_scene == SceneManager.LEADERBOARD:
+            if self.leaderboard_back_button.collidepoint(
+                mouse_position
+            ):
+                self.scene_manager.change_scene(
+                    SceneManager.MENU
+                )
 
     # Procesează butoanele PLAY, LEADERBOARD, SETTINGS și EXIT.
     def _handle_menu_click(self, mouse_position):
@@ -1370,6 +1398,12 @@ class GalaxyDefender:
         if current_scene == SceneManager.MENU:
             self._update_menu()
 
+        elif current_scene == SceneManager.LEADERBOARD:
+            self.leaderboard_animation_timer = min(
+                self.leaderboard_animation_duration,
+                self.leaderboard_animation_timer + 1,
+            )
+
         elif current_scene == SceneManager.PLANET:
             planet_action = (
                 self.planet_scene.update(delta_time)
@@ -1436,6 +1470,9 @@ class GalaxyDefender:
 
         elif current_scene == SceneManager.GAMEPLAY:
             self.gameplay.update()
+
+        if current_scene != SceneManager.LEADERBOARD:
+            self.leaderboard_animation_timer = 0
 
         # Scenele se pot schimba in timpul update-ului; muzica se sincronizeaza dupa.
         self._sync_scene_music()
@@ -3116,92 +3153,549 @@ class GalaxyDefender:
             (self.width // 2 - hint.get_width() // 2, 584),
         )
 
-    # Citește și afișează cele mai bune zece scoruri.
+    # Desenează o carte premium pentru unul dintre primii trei piloți.
+    def _draw_archive_podium_card(
+        self,
+        card_rect,
+        rank,
+        score,
+        accent_color,
+        command_label,
+        visibility,
+        featured=False,
+    ):
+        card = pygame.Surface(card_rect.size, pygame.SRCALPHA)
+        fill_alpha = int((238 if featured else 220) * visibility)
+        pygame.draw.rect(
+            card,
+            (8, 17, 39, fill_alpha),
+            card.get_rect(),
+            border_radius=14,
+        )
+        if featured:
+            pygame.draw.rect(
+                card,
+                (*accent_color, int(34 * visibility)),
+                card.get_rect().inflate(-8, -8),
+                border_radius=11,
+            )
+        pygame.draw.rect(
+            card,
+            (*accent_color, int((235 if featured else 165) * visibility)),
+            card.get_rect(),
+            2,
+            border_radius=14,
+        )
+        pygame.draw.line(
+            card,
+            (*accent_color, int(230 * visibility)),
+            (18, 1),
+            (card_rect.width - 18, 1),
+            3,
+        )
+
+        badge_center = (34, 32)
+        pygame.draw.circle(
+            card,
+            (*accent_color, int(52 * visibility)),
+            badge_center,
+            20,
+        )
+        pygame.draw.circle(
+            card,
+            (*accent_color, int(220 * visibility)),
+            badge_center,
+            20,
+            2,
+        )
+        rank_text = self.archive_rank_font.render(
+            f"{rank:02d}",
+            True,
+            accent_color,
+        )
+        rank_text.set_alpha(int(255 * visibility))
+        card.blit(
+            rank_text,
+            (
+                badge_center[0] - rank_text.get_width() // 2,
+                badge_center[1] - rank_text.get_height() // 2,
+            ),
+        )
+
+        command = self.menu_micro_font.render(
+            command_label,
+            True,
+            accent_color,
+        )
+        command.set_alpha(int(255 * visibility))
+        card.blit(command, (65, 18))
+
+        score_label = (
+            self._format_menu_score(score)
+            if score is not None
+            else "---"
+        )
+        score_surface = self.archive_score_font.render(
+            score_label,
+            True,
+            (245, 249, 255) if score is not None else (90, 112, 145),
+        )
+        score_surface.set_alpha(int(255 * visibility))
+        score_y = 57 if featured else 53
+        card.blit(
+            score_surface,
+            (
+                card_rect.width // 2 - score_surface.get_width() // 2,
+                score_y,
+            ),
+        )
+        footer = self.menu_micro_font.render(
+            "COMBAT SCORE" if score is not None else "AWAITING RECORD",
+            True,
+            (105, 132, 165),
+        )
+        footer.set_alpha(int(255 * visibility))
+        card.blit(
+            footer,
+            (
+                card_rect.width // 2 - footer.get_width() // 2,
+                card_rect.height - 27,
+            ),
+        )
+        self.screen.blit(card, card_rect.topleft)
+
+    # Desenează un rând compact pentru pozițiile patru până la zece.
+    def _draw_archive_row(
+        self,
+        row_rect,
+        rank,
+        score,
+        visibility,
+        highlighted=False,
+    ):
+        row = pygame.Surface(row_rect.size, pygame.SRCALPHA)
+        if highlighted:
+            accent = (80, 220, 180)
+            fill = (10, 47, 52, int(220 * visibility))
+        else:
+            accent = (65, 170, 220)
+            fill = (7, 19, 40, int(205 * visibility))
+
+        pygame.draw.rect(
+            row,
+            fill,
+            row.get_rect(),
+            border_radius=8,
+        )
+        pygame.draw.rect(
+            row,
+            (*accent, int(110 * visibility)),
+            row.get_rect(),
+            1,
+            border_radius=8,
+        )
+        pygame.draw.line(
+            row,
+            (*accent, int(210 * visibility)),
+            (1, 8),
+            (1, row_rect.height - 8),
+            3,
+        )
+
+        if highlighted:
+            rank_label = "PILOT BEST"
+        else:
+            rank_label = f"RANK  {rank:02d}"
+        rank_surface = self.menu_micro_font.render(
+            rank_label,
+            True,
+            accent,
+        )
+        score_surface = self.archive_row_font.render(
+            self._format_menu_score(score)
+            if score is not None
+            else "NO RECORD",
+            True,
+            (225, 240, 250)
+            if score is not None
+            else (85, 108, 140),
+        )
+        rank_surface.set_alpha(int(255 * visibility))
+        score_surface.set_alpha(int(255 * visibility))
+        row.blit(
+            rank_surface,
+            (
+                15,
+                row_rect.height // 2 - rank_surface.get_height() // 2,
+            ),
+        )
+        row.blit(
+            score_surface,
+            (
+                row_rect.width - score_surface.get_width() - 16,
+                row_rect.height // 2 - score_surface.get_height() // 2,
+            ),
+        )
+        self.screen.blit(row, row_rect.topleft)
+
+    # Butonul vizibil revine direct în centrul de comandă.
+    def _draw_archive_back_button(self, visibility):
+        button_rect = self.leaderboard_back_button
+        mouse_position = self._get_mouse_position()
+        hovered = button_rect.collidepoint(mouse_position)
+        accent = (90, 220, 255)
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button,
+            (12, 75, 108, int(240 * visibility))
+            if hovered
+            else (7, 24, 49, int(225 * visibility)),
+            button.get_rect(),
+            border_radius=10,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent, int((235 if hovered else 150) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=10,
+        )
+        pygame.draw.line(
+            button,
+            accent,
+            (22, button_rect.height // 2),
+            (32, button_rect.height // 2 - 8),
+            2,
+        )
+        pygame.draw.line(
+            button,
+            accent,
+            (22, button_rect.height // 2),
+            (32, button_rect.height // 2 + 8),
+            2,
+        )
+        label = self.menu_subtitle_font.render(
+            "RETURN TO COMMAND",
+            True,
+            (235, 248, 255),
+        )
+        label.set_alpha(int(255 * visibility))
+        button.blit(
+            label,
+            (
+                button_rect.width // 2 - label.get_width() // 2,
+                button_rect.height // 2 - label.get_height() // 2,
+            ),
+        )
+        self.screen.blit(button, button_rect.topleft)
+
+    # Citește și prezintă cele mai bune zece scoruri ca arhivă de piloți.
     def _draw_leaderboard(self):
         self._draw_secondary_screen_frame(
-            "LEADERBOARD",
-            "GALACTIC DEFENSE COMMAND  //  PILOT ARCHIVE",
+            "PILOT ARCHIVE",
+            "GALACTIC DEFENSE COMMAND  //  VERIFIED COMBAT RECORDS",
         )
+
+        visibility = min(
+            1.0,
+            self.leaderboard_animation_timer / 28,
+        )
+        panel_rect = pygame.Rect(130, 184, 1020, 420)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (4, 10, 28, int(234 * visibility)),
+            panel.get_rect(),
+            border_radius=18,
+        )
+        pygame.draw.rect(
+            panel,
+            (75, 205, 255, int(160 * visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=18,
+        )
+        pygame.draw.line(
+            panel,
+            (75, 205, 255, int(225 * visibility)),
+            (24, 1),
+            (panel_rect.width - 24, 1),
+            3,
+        )
+        self.screen.blit(panel, panel_rect.topleft)
 
         scores = self.load_leaderboard()
-        panel_rect = pygame.Rect(330, 195, 620, 425)
-        self._draw_glass_panel(panel_rect)
-
-        rank_header = self.menu_label_font.render(
-            "RANK",
+        pilot_best = max(
+            max(scores, default=0),
+            max(
+                0,
+                int(self.save_manager.data.get("highest_score", 0)),
+            ),
+        )
+        header = self.menu_label_font.render(
+            "TOP DEFENDERS  //  GALACTIC RANKING",
             True,
-            (110, 205, 250),
+            (105, 210, 250),
         )
-        score_header = self.menu_label_font.render(
-            "COMBAT SCORE",
+        archive_status = self.menu_micro_font.render(
+            f"ARCHIVED ENTRIES  //  {len(scores):02d}     "
+            f"ACTIVE PILOT BEST  //  {self._format_menu_score(pilot_best)}",
             True,
-            (110, 205, 250),
+            (110, 145, 180),
         )
-        self.screen.blit(rank_header, (panel_rect.x + 42, 222))
-        self.screen.blit(score_header, (panel_rect.right - 190, 222))
-        pygame.draw.line(
-            self.screen,
-            (50, 105, 150),
-            (panel_rect.x + 28, 253),
-            (panel_rect.right - 28, 253),
-            1,
+        header.set_alpha(int(255 * visibility))
+        archive_status.set_alpha(int(255 * visibility))
+        self.screen.blit(header, (panel_rect.x + 32, panel_rect.y + 17))
+        self.screen.blit(
+            archive_status,
+            (
+                panel_rect.right - archive_status.get_width() - 32,
+                panel_rect.y + 20,
+            ),
         )
-
-        y_position = 270
 
         if not scores:
-            no_scores_text = self.font.render(
-                "NO COMBAT RECORDS YET",
+            empty_center = (self.width // 2, 337)
+            pulse = (
+                math.sin(pygame.time.get_ticks() * 0.004) + 1.0
+            ) / 2.0
+            for circle_index, radius in enumerate((92, 66, 38)):
+                pygame.draw.circle(
+                    self.screen,
+                    (
+                        65,
+                        175,
+                        225,
+                        int((42 - circle_index * 8) * visibility),
+                    ),
+                    empty_center,
+                    radius + int(pulse * (3 - circle_index)),
+                    1,
+                )
+            pygame.draw.line(
+                self.screen,
+                (75, 190, 235),
+                (empty_center[0] - 112, empty_center[1]),
+                (empty_center[0] - 26, empty_center[1]),
+                1,
+            )
+            pygame.draw.line(
+                self.screen,
+                (75, 190, 235),
+                (empty_center[0] + 26, empty_center[1]),
+                (empty_center[0] + 112, empty_center[1]),
+                1,
+            )
+            empty_title = self.font.render(
+                "NO VERIFIED COMBAT RECORDS",
                 True,
-                (155, 175, 205),
+                (210, 232, 246),
+            )
+            empty_subtitle = self.menu_label_font.render(
+                "COMPLETE A MISSION TO REGISTER YOUR FIRST SCORE",
+                True,
+                (95, 165, 205),
+            )
+            empty_title.set_alpha(int(255 * visibility))
+            empty_subtitle.set_alpha(int(255 * visibility))
+            self.screen.blit(
+                empty_title,
+                (
+                    self.width // 2 - empty_title.get_width() // 2,
+                    445,
+                ),
             )
             self.screen.blit(
-                no_scores_text,
+                empty_subtitle,
                 (
-                    self.width // 2
-                    - no_scores_text.get_width() // 2,
-                    y_position,
+                    self.width // 2 - empty_subtitle.get_width() // 2,
+                    486,
                 ),
             )
 
-        for index, score_value in enumerate(scores):
-            row_rect = pygame.Rect(
-                panel_rect.x + 24,
-                y_position - 5,
-                panel_rect.width - 48,
-                31,
+            button_visibility = max(
+                0.0,
+                min(
+                    1.0,
+                    (self.leaderboard_animation_timer - 18) / 18,
+                ),
             )
-            if index % 2 == 0:
-                pygame.draw.rect(
-                    self.screen,
-                    (12, 29, 55),
-                    row_rect,
-                    border_radius=5,
-                )
-
-            rank_color = (
-                (255, 195, 85)
-                if index == 0
-                else (205, 220, 238)
-            )
-            rank_text = self.menu_subtitle_font.render(
-                f"#{index + 1:02d}",
+            self._draw_archive_back_button(button_visibility)
+            back_hint = self.menu_micro_font.render(
+                "ENTER  //  MAIN MENU        ESC  //  PREVIOUS SCREEN",
                 True,
-                rank_color,
+                (90, 115, 148),
             )
-            score_text = self.menu_subtitle_font.render(
-                f"{score_value:,}".replace(",", " "),
-                True,
-                (235, 245, 255),
-            )
-            self.screen.blit(rank_text, (panel_rect.x + 43, y_position))
+            back_hint.set_alpha(int(255 * button_visibility))
             self.screen.blit(
-                score_text,
-                (panel_rect.right - 48 - score_text.get_width(), y_position),
+                back_hint,
+                (
+                    self.width // 2 - back_hint.get_width() // 2,
+                    683,
+                ),
             )
-            y_position += 34
+            return
 
-        self._draw_back_hint()
+        count_progress = max(
+            0.0,
+            min(
+                1.0,
+                (self.leaderboard_animation_timer - 8) / 38,
+            ),
+        )
+        count_progress = 1.0 - (1.0 - count_progress) ** 3
+        podium_layout = (
+            (2, pygame.Rect(165, 238, 280, 135), (185, 205, 225), "SILVER COMMAND"),
+            (1, pygame.Rect(500, 226, 280, 152), (255, 196, 82), "GOLD COMMAND"),
+            (3, pygame.Rect(835, 238, 280, 135), (218, 139, 86), "BRONZE COMMAND"),
+        )
+        for slot_index, (rank, card_rect, color, label) in enumerate(
+            podium_layout
+        ):
+            score_index = rank - 1
+            actual_score = (
+                scores[score_index]
+                if score_index < len(scores)
+                else None
+            )
+            displayed_score = (
+                int(actual_score * count_progress)
+                if actual_score is not None
+                else None
+            )
+            card_visibility = max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        self.leaderboard_animation_timer
+                        - 4
+                        - slot_index * 4
+                    ) / 24,
+                ),
+            )
+            self._draw_archive_podium_card(
+                card_rect,
+                rank,
+                displayed_score,
+                color,
+                label,
+                card_visibility,
+                featured=(rank == 1),
+            )
+
+        pygame.draw.line(
+            self.screen,
+            (55, 110, 150, int(135 * visibility)),
+            (panel_rect.x + 35, 390),
+            (panel_rect.right - 35, 390),
+            1,
+        )
+        left_header = self.menu_micro_font.render(
+            "ARCHIVE BLOCK A  //  RANKS 04-07",
+            True,
+            (85, 145, 185),
+        )
+        right_header = self.menu_micro_font.render(
+            "ARCHIVE BLOCK B  //  RANKS 08-10",
+            True,
+            (85, 145, 185),
+        )
+        left_header.set_alpha(int(255 * visibility))
+        right_header.set_alpha(int(255 * visibility))
+        self.screen.blit(left_header, (165, 399))
+        self.screen.blit(right_header, (670, 399))
+
+        row_width = 445
+        row_height = 32
+        row_gap = 6
+        for rank in range(4, 8):
+            row_index = rank - 4
+            row_visibility = max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        self.leaderboard_animation_timer
+                        - 18
+                        - row_index * 3
+                    ) / 18,
+                ),
+            )
+            score = scores[rank - 1] if rank - 1 < len(scores) else None
+            self._draw_archive_row(
+                pygame.Rect(
+                    165,
+                    420 + row_index * (row_height + row_gap),
+                    row_width,
+                    row_height,
+                ),
+                rank,
+                score,
+                row_visibility,
+            )
+
+        for rank in range(8, 11):
+            row_index = rank - 8
+            row_visibility = max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        self.leaderboard_animation_timer
+                        - 21
+                        - row_index * 3
+                    ) / 18,
+                ),
+            )
+            score = scores[rank - 1] if rank - 1 < len(scores) else None
+            self._draw_archive_row(
+                pygame.Rect(
+                    670,
+                    420 + row_index * (row_height + row_gap),
+                    row_width,
+                    row_height,
+                ),
+                rank,
+                score,
+                row_visibility,
+            )
+
+        self._draw_archive_row(
+            pygame.Rect(670, 534, row_width, row_height),
+            0,
+            pilot_best,
+            max(
+                0.0,
+                min(
+                    1.0,
+                    (self.leaderboard_animation_timer - 30) / 18,
+                ),
+            ),
+            highlighted=True,
+        )
+
+        button_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.leaderboard_animation_timer - 28) / 18,
+            ),
+        )
+        self._draw_archive_back_button(button_visibility)
+        back_hint = self.menu_micro_font.render(
+            "ENTER  //  MAIN MENU        ESC  //  PREVIOUS SCREEN",
+            True,
+            (90, 115, 148),
+        )
+        back_hint.set_alpha(int(255 * button_visibility))
+        self.screen.blit(
+            back_hint,
+            (
+                self.width // 2 - back_hint.get_width() // 2,
+                683,
+            ),
+        )
 
     # Desenează valorile și butoanele disponibile în meniul Settings.
     def _draw_settings(self):
