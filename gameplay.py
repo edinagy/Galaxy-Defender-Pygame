@@ -43,6 +43,7 @@ class Gameplay:
         event_sounds,
         get_music_volume,
         save_score,
+        get_best_score,
     ):
         self.screen = screen
         self.width = screen.get_width()
@@ -63,6 +64,9 @@ class Gameplay:
             None,
             18,
         )
+        self.result_number_font = pygame.font.Font(None, 50)
+        self.result_label_font = pygame.font.Font(None, 21)
+        self.result_button_font = pygame.font.Font(None, 28)
 
         self.shoot_sound = shoot_sound
         self.enemy_destroy_sound = enemy_destroy_sound
@@ -73,6 +77,7 @@ class Gameplay:
         self.event_sounds = event_sounds
         self.get_music_volume = get_music_volume
         self.save_score = save_score
+        self.get_best_score = get_best_score
 
         # Fundalul luptei folosește același sistem Dead Star din cinematică.
         original_background = pygame.image.load(
@@ -210,6 +215,18 @@ class Gameplay:
         self.player_destruction_effect = None
         self.game_over_score_saved = False
 
+        # Raportul final intră animat și folosește coordonatele logice ale
+        # mouse-ului, inclusiv când fereastra este scalată sau fullscreen.
+        self.result_animation_timer = 0
+        self.result_animation_duration = 72
+        self.result_previous_best = max(0, int(self.get_best_score()))
+        self.result_is_new_record = False
+        self.result_pointer_position = (
+            self.width // 2,
+            self.height // 2,
+        )
+        self.result_button_rects = {}
+
         # Timerul controleaza prezentarea cinematica dintre fazele bossului.
         self.boss_phase_transition_timer = 0
         self.boss_phase_transition_duration = 150
@@ -245,20 +262,52 @@ class Gameplay:
         if event.type != pygame.KEYDOWN:
             return None
 
-        if event.key == pygame.K_r and self.game_over:
-            self.reset(self.starting_score)
+        if self.game_over:
+            if event.key == pygame.K_r:
+                self.reset(self.starting_score)
+            elif event.key == pygame.K_ESCAPE:
+                return "menu"
+            return None
 
-        elif self.victory and event.key in (
-            pygame.K_RETURN,
-            pygame.K_ESCAPE,
-        ):
-            return "menu"
+        if self.victory:
+            if event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                return "menu"
+            if event.key == pygame.K_l:
+                return "leaderboard"
+            return None
 
-        elif event.key == pygame.K_e:
+        if event.key == pygame.K_e:
             self._activate_energy_pulse()
 
         elif event.key == pygame.K_ESCAPE:
             return "pause"
+
+        return None
+
+    # Primește poziția deja transformată de DisplayManager în coordonate 1280x720.
+    def set_pointer_position(self, mouse_position):
+        self.result_pointer_position = (
+            int(mouse_position[0]),
+            int(mouse_position[1]),
+        )
+
+    # Procesează butoanele raportului final fără să amestece logica meniului.
+    def handle_click(self, mouse_position):
+        if not (self.game_over or self.victory):
+            return None
+
+        self.set_pointer_position(mouse_position)
+        if self.result_animation_timer < 36:
+            return None
+
+        for action, button_rect in self.result_button_rects.items():
+            if not button_rect.collidepoint(mouse_position):
+                continue
+
+            if action == "retry":
+                self.reset(self.starting_score)
+                return None
+            return action
 
         return None
 
@@ -581,6 +630,12 @@ class Gameplay:
             return
 
         if self.game_over or self.victory:
+            self.result_animation_timer = min(
+                self.result_animation_duration,
+                self.result_animation_timer + 1,
+            )
+            # Exploziile finale continuă în spatele raportului de misiune.
+            self._update_effects()
             return
 
         self.player.move(
@@ -666,8 +721,16 @@ class Gameplay:
     # Salvează scorul o singură dată, apoi permite afișarea Game Over.
     def _finish_player_destruction(self):
         if not self.game_over_score_saved:
+            self.result_previous_best = max(
+                0,
+                int(self.get_best_score()),
+            )
+            self.result_is_new_record = (
+                self.score > self.result_previous_best
+            )
             self.save_score(self.score)
             self.game_over_score_saved = True
+            self.result_animation_timer = 0
 
         self.game_over = True
 
@@ -1926,8 +1989,16 @@ class Gameplay:
 
             if not self.victory_score_saved:
                 # Victory folosește același scor total afișat pe HUD.
+                self.result_previous_best = max(
+                    0,
+                    int(self.get_best_score()),
+                )
+                self.result_is_new_record = (
+                    self.score > self.result_previous_best
+                )
                 self.save_score(self.score)
                 self.victory_score_saved = True
+                self.result_animation_timer = 0
 
     def _move_objects(self):
         for bullet in self.bullets:
@@ -3449,124 +3520,431 @@ class Gameplay:
             ),
         )
 
-    # Desenează panoul central comun pentru Game Over și Victory.
+    @staticmethod
+    def _format_result_number(value):
+        return f"{max(0, int(value)):,}".replace(",", " ")
+
+    # Calculează un panou centrat care rămâne în limite la orice rezoluție.
+    def _get_result_layout(self):
+        panel_width = min(940, self.width - 64)
+        panel_height = min(570, self.height - 44)
+        entrance_progress = min(
+            1.0,
+            self.result_animation_timer / 34,
+        )
+        eased_progress = 1.0 - (1.0 - entrance_progress) ** 3
+        entrance_offset = int((1.0 - eased_progress) * 72)
+        panel_rect = pygame.Rect(
+            self.width // 2 - panel_width // 2,
+            self.height // 2 - panel_height // 2 + entrance_offset,
+            panel_width,
+            panel_height,
+        )
+
+        inner_padding = max(30, int(panel_width * 0.055))
+        card_gap = 14
+        card_width = (
+            panel_width - inner_padding * 2 - card_gap * 2
+        ) // 3
+        card_y = panel_rect.y + int(panel_height * 0.43)
+        card_height = max(88, int(panel_height * 0.19))
+        card_rects = [
+            pygame.Rect(
+                panel_rect.x + inner_padding + index * (card_width + card_gap),
+                card_y,
+                card_width,
+                card_height,
+            )
+            for index in range(3)
+        ]
+
+        button_gap = 20
+        button_width = (
+            panel_width - inner_padding * 2 - button_gap
+        ) // 2
+        button_height = max(54, int(panel_height * 0.105))
+        button_y = panel_rect.bottom - button_height - 63
+        button_rects = (
+            pygame.Rect(
+                panel_rect.x + inner_padding,
+                button_y,
+                button_width,
+                button_height,
+            ),
+            pygame.Rect(
+                panel_rect.right - inner_padding - button_width,
+                button_y,
+                button_width,
+                button_height,
+            ),
+        )
+        return panel_rect, card_rects, button_rects
+
+    # Desenează o valoare din raport: scor, wave sau record personal.
+    def _draw_result_stat_card(
+        self,
+        card_rect,
+        label,
+        value,
+        accent_color,
+        visibility,
+        highlighted=False,
+    ):
+        card = pygame.Surface(card_rect.size, pygame.SRCALPHA)
+        fill_color = (
+            (28, 22, 45, int(230 * visibility))
+            if highlighted
+            else (7, 15, 34, int(220 * visibility))
+        )
+        border_color = (
+            (255, 193, 92, int(220 * visibility))
+            if highlighted
+            else (*accent_color, int(130 * visibility))
+        )
+        pygame.draw.rect(
+            card,
+            fill_color,
+            card.get_rect(),
+            border_radius=12,
+        )
+        pygame.draw.rect(
+            card,
+            border_color,
+            card.get_rect(),
+            2,
+            border_radius=12,
+        )
+
+        label_surface = self.result_label_font.render(
+            label,
+            True,
+            (125, 155, 190),
+        )
+        value_surface = self.result_number_font.render(
+            value,
+            True,
+            (255, 203, 105) if highlighted else (225, 242, 255),
+        )
+        label_surface.set_alpha(int(255 * visibility))
+        value_surface.set_alpha(int(255 * visibility))
+        card.blit(
+            label_surface,
+            (
+                card_rect.width // 2 - label_surface.get_width() // 2,
+                15,
+            ),
+        )
+        card.blit(
+            value_surface,
+            (
+                card_rect.width // 2 - value_surface.get_width() // 2,
+                39,
+            ),
+        )
+        self.screen.blit(card, card_rect.topleft)
+
+    # Desenează un buton cu hover, folosit atât de mouse, cât și de taste.
+    def _draw_result_button(
+        self,
+        button_rect,
+        label,
+        accent_color,
+        visibility,
+        primary=False,
+    ):
+        hovered = button_rect.collidepoint(
+            self.result_pointer_position
+        )
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        if hovered:
+            fill = (*accent_color, int(195 * visibility))
+            text_color = (255, 255, 255)
+        elif primary:
+            fill = (*accent_color, int(92 * visibility))
+            text_color = (225, 245, 255)
+        else:
+            fill = (12, 23, 47, int(225 * visibility))
+            text_color = (190, 210, 235)
+
+        pygame.draw.rect(
+            button,
+            fill,
+            button.get_rect(),
+            border_radius=11,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent_color, int((230 if hovered else 145) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=11,
+        )
+        text = self.result_button_font.render(
+            label,
+            True,
+            text_color,
+        )
+        text.set_alpha(int(255 * visibility))
+        button.blit(
+            text,
+            (
+                button_rect.width // 2 - text.get_width() // 2,
+                button_rect.height // 2 - text.get_height() // 2,
+            ),
+        )
+        if hovered:
+            arrow = self.result_button_font.render(">", True, (255, 255, 255))
+            arrow.set_alpha(int(255 * visibility))
+            button.blit(
+                arrow,
+                (
+                    button_rect.width - arrow.get_width() - 18,
+                    button_rect.height // 2 - arrow.get_height() // 2,
+                ),
+            )
+        self.screen.blit(button, button_rect.topleft)
+
+    # Panoul comun oferă animație, statistici și acțiuni reale de mouse.
     def _draw_result_panel(
         self,
         title,
         subtitle,
         accent_color,
-        prompt,
+        left_button,
+        left_action,
+        right_button,
+        right_action,
+        keyboard_hint,
+        victory=False,
     ):
+        entrance_visibility = min(
+            1.0,
+            self.result_animation_timer / 30,
+        )
+        content_visibility = max(
+            0.0,
+            min(1.0, (self.result_animation_timer - 10) / 28),
+        )
+        button_visibility = max(
+            0.0,
+            min(1.0, (self.result_animation_timer - 30) / 24),
+        )
+
         overlay = pygame.Surface(
             (self.width, self.height),
             pygame.SRCALPHA,
         )
-        overlay.fill((2, 4, 15, 205))
+        overlay.fill((2, 4, 15, int(214 * entrance_visibility)))
+
+        # Linii lente de scanare păstrează arena vizibilă sub raport.
+        scan_offset = self.result_animation_timer * 3 % 46
+        for scan_y in range(int(scan_offset) - 46, self.height, 46):
+            pygame.draw.line(
+                overlay,
+                (*accent_color, int(15 * entrance_visibility)),
+                (0, scan_y),
+                (self.width, scan_y),
+                1,
+            )
         self.screen.blit(overlay, (0, 0))
 
-        panel_rect = pygame.Rect(
-            self.width // 2 - 395,
-            self.height // 2 - 225,
-            790,
-            450,
-        )
-        panel = pygame.Surface(
-            panel_rect.size,
-            pygame.SRCALPHA,
-        )
+        panel_rect, card_rects, button_rects = self._get_result_layout()
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
         pygame.draw.rect(
             panel,
-            (5, 10, 27, 235),
+            (5, 10, 27, int(242 * entrance_visibility)),
             panel.get_rect(),
             border_radius=20,
         )
         pygame.draw.rect(
             panel,
-            (*accent_color, 185),
+            (*accent_color, int(195 * entrance_visibility)),
             panel.get_rect(),
             2,
             border_radius=20,
         )
         pygame.draw.line(
             panel,
-            (*accent_color, 245),
-            (35, 0),
-            (panel_rect.width - 35, 0),
+            (*accent_color, int(245 * entrance_visibility)),
+            (38, 1),
+            (panel_rect.width - 38, 1),
             4,
         )
+
+        # Colțurile tehnice completează stilul panourilor din meniu și HUD.
+        corner_length = 28
+        for corner_x, direction in (
+            (20, 1),
+            (panel_rect.width - 20, -1),
+        ):
+            pygame.draw.line(
+                panel,
+                (*accent_color, int(185 * entrance_visibility)),
+                (corner_x, 20),
+                (corner_x + direction * corner_length, 20),
+                2,
+            )
+            pygame.draw.line(
+                panel,
+                (*accent_color, int(185 * entrance_visibility)),
+                (corner_x, 20),
+                (corner_x, 48),
+                2,
+            )
         self.screen.blit(panel, panel_rect.topleft)
 
         status_text = self.ally_label_font.render(
-            "GALACTIC DEFENSE COMMAND  //  MISSION REPORT",
+            "GALACTIC DEFENSE COMMAND  //  FINAL MISSION REPORT",
             True,
             accent_color,
         )
         title_text = self.game_over_font.render(
             title,
             True,
-            (238, 246, 255),
+            (240, 248, 255),
         )
         subtitle_text = self.battle_subtitle_font.render(
             subtitle,
             True,
-            (175, 193, 218),
+            (175, 197, 224),
         )
-        score_label = self.ally_label_font.render(
-            "FINAL COMBAT SCORE",
-            True,
-            (115, 140, 175),
+        for text in (status_text, title_text, subtitle_text):
+            text.set_alpha(int(255 * content_visibility))
+
+        self.screen.blit(
+            status_text,
+            (
+                self.width // 2 - status_text.get_width() // 2,
+                panel_rect.y + 28,
+            ),
         )
-        score_text = self.battle_title_font.render(
-            f"{self.score:,}".replace(",", " "),
-            True,
-            (255, 193, 92),
+        self.screen.blit(
+            title_text,
+            (
+                self.width // 2 - title_text.get_width() // 2,
+                panel_rect.y + 58,
+            ),
         )
-        prompt_text = self.restart_font.render(
-            prompt,
-            True,
-            (205, 225, 242),
+        self.screen.blit(
+            subtitle_text,
+            (
+                self.width // 2 - subtitle_text.get_width() // 2,
+                panel_rect.y + 164,
+            ),
         )
 
-        elements = [
-            (status_text, panel_rect.y + 35),
-            (title_text, panel_rect.y + 74),
-            (subtitle_text, panel_rect.y + 178),
-            (score_label, panel_rect.y + 244),
-            (score_text, panel_rect.y + 270),
-            (prompt_text, panel_rect.y + 372),
-        ]
-        for surface, y_position in elements:
-            self.screen.blit(
-                surface,
-                (
-                    self.width // 2
-                    - surface.get_width() // 2,
-                    y_position,
-                ),
+        report_note = (
+            "SOVEREIGN ELIMINATION BONUS  //  +10 000"
+            if victory
+            else f"COMBAT LINK LOST  //  WAVE {self.wave:02d}"
+        )
+        if self.result_is_new_record:
+            report_note = "NEW GALACTIC RECORD  //  PILOT ARCHIVE UPDATED"
+            note_color = (255, 198, 90)
+        else:
+            note_color = accent_color
+        note_surface = self.result_label_font.render(
+            report_note,
+            True,
+            note_color,
+        )
+        note_surface.set_alpha(int(255 * content_visibility))
+        self.screen.blit(
+            note_surface,
+            (
+                self.width // 2 - note_surface.get_width() // 2,
+                panel_rect.y + 207,
+            ),
+        )
+
+        count_progress = max(
+            0.0,
+            min(1.0, (self.result_animation_timer - 14) / 42),
+        )
+        count_progress = 1.0 - (1.0 - count_progress) ** 3
+        best_score = max(
+            self.score,
+            max(0, int(self.get_best_score())),
+        )
+        displayed_score = int(self.score * count_progress)
+        displayed_wave = max(1, int(self.wave * count_progress))
+        displayed_best = int(best_score * count_progress)
+        statistics = (
+            ("FINAL COMBAT SCORE", self._format_result_number(displayed_score)),
+            ("HOSTILE WAVE REACHED", f"{displayed_wave:02d}"),
+            ("GALACTIC BEST SCORE", self._format_result_number(displayed_best)),
+        )
+        for card_index, (label, value) in enumerate(statistics):
+            self._draw_result_stat_card(
+                card_rects[card_index],
+                label,
+                value,
+                accent_color,
+                content_visibility,
+                highlighted=(card_index == 0 or (
+                    card_index == 2 and self.result_is_new_record
+                )),
             )
 
-        pygame.draw.line(
-            self.screen,
-            accent_color,
-            (panel_rect.x + 160, panel_rect.y + 352),
-            (panel_rect.right - 160, panel_rect.y + 352),
-            2,
+        if button_visibility > 0:
+            self._draw_result_button(
+                button_rects[0],
+                left_button,
+                accent_color,
+                button_visibility,
+                primary=True,
+            )
+            self._draw_result_button(
+                button_rects[1],
+                right_button,
+                accent_color,
+                button_visibility,
+            )
+            self.result_button_rects = {
+                left_action: button_rects[0],
+                right_action: button_rects[1],
+            }
+        else:
+            self.result_button_rects = {}
+
+        hint = self.ally_label_font.render(
+            keyboard_hint,
+            True,
+            (110, 135, 168),
+        )
+        hint.set_alpha(int(255 * button_visibility))
+        self.screen.blit(
+            hint,
+            (
+                self.width // 2 - hint.get_width() // 2,
+                panel_rect.bottom - 32,
+            ),
         )
 
-    # Afișează concluzia luptei după secvența finală de explozii.
+    # Victoria oferă acces direct la clasament sau întoarcerea în meniu.
     def _draw_victory(self):
         self._draw_result_panel(
             title="GALAXY DEFENDED",
             subtitle="THE DEAD STAR SOVEREIGN HAS FALLEN",
             accent_color=(75, 215, 255),
-            prompt="ENTER  //  RETURN TO MAIN MENU",
+            left_button="VIEW LEADERBOARD",
+            left_action="leaderboard",
+            right_button="MAIN MENU",
+            right_action="menu",
+            keyboard_hint="L  //  LEADERBOARD     ENTER / ESC  //  MAIN MENU",
+            victory=True,
         )
 
-    # Afișează raportul de înfrângere și comanda pentru o nouă încercare.
+    # Înfrângerea oferă Retry și Main Menu atât prin mouse, cât și tastatură.
     def _draw_game_over(self):
         self._draw_result_panel(
             title="MISSION FAILED",
             subtitle="YOUR SHIP WAS LOST IN ENEMY TERRITORY",
             accent_color=(255, 73, 105),
-            prompt="R  //  RETRY MISSION",
+            left_button="RETRY MISSION",
+            left_action="retry",
+            right_button="MAIN MENU",
+            right_action="menu",
+            keyboard_hint="R  //  RETRY MISSION     ESC  //  MAIN MENU",
+            victory=False,
         )

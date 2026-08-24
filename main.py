@@ -91,6 +91,8 @@ class GalaxyDefender:
         self.menu_button_font = pygame.font.Font(None, 32)
         self.menu_label_font = pygame.font.Font(None, 21)
         self.menu_subtitle_font = pygame.font.Font(None, 27)
+        self.menu_micro_font = pygame.font.Font(None, 16)
+        self.menu_protocol_font = pygame.font.Font(None, 19)
         self.title_font = pygame.font.Font(
             None,
             100,
@@ -205,6 +207,9 @@ class GalaxyDefender:
             event_sounds=self.event_sounds,
             get_music_volume=lambda: self.music_volume,
             save_score=self.save_score,
+            get_best_score=lambda: self.save_manager.data[
+                "highest_score"
+            ],
         )
 
         # Jocul porneste cu atmosfera calma a meniului principal.
@@ -264,13 +269,15 @@ class GalaxyDefender:
 
         # Creează nava și obiectele decorative din meniul principal.
         self.menu_player = Player()
-        self.menu_player.x = 145
-        self.menu_player.y = 465
+        self.menu_ship_base_x = 153
+        self.menu_ship_base_y = 476
+        self.menu_ship_float_timer = 0.0
+        self.menu_player.x = self.menu_ship_base_x
+        self.menu_player.y = self.menu_ship_base_y
         self.menu_player.rect.topleft = (
             self.menu_player.x,
             self.menu_player.y,
         )
-        self.menu_ship_direction = -1
 
         # Fundalul meniului contine deja un camp de stele detaliat.
         # Nu mai adaugam particule albe sau inamici decorativi peste el,
@@ -837,9 +844,15 @@ class GalaxyDefender:
             return
 
         if current_scene == SceneManager.GAMEPLAY:
-            gameplay_action = (
-                self.gameplay.handle_event(event)
-            )
+            if (
+                event.type == pygame.MOUSEBUTTONDOWN
+                and event.button == 1
+            ):
+                gameplay_action = self.gameplay.handle_click(
+                    self._to_game_position(event.pos)
+                )
+            else:
+                gameplay_action = self.gameplay.handle_event(event)
 
             if gameplay_action == "pause":
                 self.scene_manager.change_scene(
@@ -849,6 +862,10 @@ class GalaxyDefender:
                 # Dupa Victory, ENTER sau ESC revine in meniul principal.
                 self.scene_manager.change_scene(
                     SceneManager.MENU
+                )
+            elif gameplay_action == "leaderboard":
+                self.scene_manager.change_scene(
+                    SceneManager.LEADERBOARD
                 )
 
             return
@@ -1411,24 +1428,19 @@ class GalaxyDefender:
 
     # Actualizează animațiile decorative din meniul principal.
     def _update_menu(self):
-        self.menu_player.y += (
-            self.menu_ship_direction * 0.3
-        )
-
-        if self.menu_player.y > (
-            self.height // 2 + 40
-        ):
-            self.menu_ship_direction = -1
-
-        elif self.menu_player.y < (
-            self.height // 2 - 40
-        ):
-            self.menu_ship_direction = 1
+        self.menu_ship_float_timer += 0.035
+        self.menu_player.x = self.menu_ship_base_x + math.sin(
+            self.menu_ship_float_timer * 0.58
+        ) * 2.0
+        self.menu_player.y = self.menu_ship_base_y + math.sin(
+            self.menu_ship_float_timer
+        ) * 7.0
 
         self.menu_player.rect.topleft = (
             self.menu_player.x,
             self.menu_player.y,
         )
+        self.menu_player.update_engine()
 
         self.logo_timer += 0.05
 
@@ -1466,6 +1478,9 @@ class GalaxyDefender:
             self.dead_star_scene.draw()
 
         elif current_scene == SceneManager.GAMEPLAY:
+            self.gameplay.set_pointer_position(
+                self._get_mouse_position()
+            )
             self.gameplay.draw()
 
         elif current_scene == SceneManager.PAUSE:
@@ -1490,153 +1505,942 @@ class GalaxyDefender:
             (0, 0),
         )
 
+        self._draw_menu_ship_showcase()
         self.menu_player.draw(self.screen)
+        self._draw_menu_ship_scan_overlay()
 
         self._draw_logo()
         self._draw_menu_mission_panel()
-        self._draw_menu_navigation_panel()
-
         mouse_position = self._get_mouse_position()
+        menu_buttons = self._get_menu_buttons()
 
-        for button_rect, button_text, action in (
-            self._get_menu_buttons()
-        ):
-            self._draw_button(
+        self._draw_menu_navigation_panel(
+            mouse_position,
+            menu_buttons,
+        )
+
+        for button_rect, button_text, action in menu_buttons:
+            self._draw_menu_navigation_button(
                 button_rect,
                 button_text,
+                action,
                 mouse_position,
-                animated=True,
+                primary=(action in ("continue", "play")),
             )
 
         if self.confirm_new_game:
             self._draw_new_game_confirmation()
 
-    # Afiseaza contextul narativ si starea save-ului in partea stanga.
+    @staticmethod
+    def _format_menu_score(value):
+        return f"{max(0, int(value)):,}".replace(",", " ")
+
+    # Afișează progresul real al campaniei și datele salvate ale pilotului.
     def _draw_menu_mission_panel(self):
         panel_rect = pygame.Rect(
             82,
-            245,
+            230,
             430,
-            168,
+            224,
         )
+
+        shadow = pygame.Surface(
+            (panel_rect.width + 20, panel_rect.height + 20),
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            shadow,
+            (0, 0, 10, 115),
+            shadow.get_rect(),
+            border_radius=18,
+        )
+        self.screen.blit(
+            shadow,
+            (panel_rect.x - 10, panel_rect.y - 7),
+        )
+
         panel_surface = pygame.Surface(
             panel_rect.size,
             pygame.SRCALPHA,
         )
         pygame.draw.rect(
             panel_surface,
-            (5, 12, 29, 194),
+            (4, 12, 29, 225),
             panel_surface.get_rect(),
-            border_radius=12,
+            border_radius=15,
         )
         pygame.draw.rect(
             panel_surface,
-            (55, 165, 225, 145),
+            (55, 175, 230, 175),
             panel_surface.get_rect(),
             2,
-            border_radius=12,
+            border_radius=15,
+        )
+        pygame.draw.rect(
+            panel_surface,
+            (20, 50, 78, 45),
+            pygame.Rect(8, 8, panel_rect.width - 16, 44),
+            border_radius=10,
         )
         pygame.draw.line(
             panel_surface,
             (70, 210, 255, 220),
-            (18, 45),
-            (205, 45),
+            (18, 46),
+            (214, 46),
             2,
         )
+        pygame.draw.line(
+            panel_surface,
+            (120, 80, 205, 85),
+            (214, 46),
+            (panel_rect.width - 18, 46),
+            1,
+        )
+
+        for corner_x, direction in (
+            (16, 1),
+            (panel_rect.width - 16, -1),
+        ):
+            pygame.draw.line(
+                panel_surface,
+                (80, 215, 255, 190),
+                (corner_x, 1),
+                (corner_x + direction * 23, 1),
+                3,
+            )
         self.screen.blit(panel_surface, panel_rect.topleft)
 
+        saved_data = self.save_manager.data
+        scene_order = (
+            SceneManager.PLANET,
+            SceneManager.HANGAR,
+            SceneManager.LAUNCH,
+            SceneManager.VORTEX,
+            SceneManager.ASTEROIDS,
+            SceneManager.ANOMALY,
+            SceneManager.WORMHOLE,
+            SceneManager.DEAD_STAR,
+            SceneManager.GAMEPLAY,
+        )
+        current_scene = saved_data.get(
+            "current_scene",
+            SceneManager.PLANET,
+        )
+        scene_index = (
+            scene_order.index(current_scene)
+            if current_scene in scene_order
+            else 0
+        )
+        campaign_progress = int(
+            scene_index / (len(scene_order) - 1) * 100
+        )
+        sector_names = {
+            SceneManager.PLANET: "HOMEWORLD",
+            SceneManager.HANGAR: "LAUNCH BAY",
+            SceneManager.LAUNCH: "ORBITAL ASCENT",
+            SceneManager.VORTEX: "VORTEX EDGE",
+            SceneManager.ASTEROIDS: "ASTEROID OCEAN",
+            SceneManager.ANOMALY: "GRAVITY ANOMALY",
+            SceneManager.WORMHOLE: "WORMHOLE",
+            SceneManager.DEAD_STAR: "DEAD STAR",
+            SceneManager.GAMEPLAY: "WAR ZONE",
+        }
+
         header = self.menu_label_font.render(
-            "GALACTIC DEFENSE COMMAND",
+            "MISSION BRIEFING",
             True,
             (100, 205, 255),
+        )
+        link_status = self.menu_micro_font.render(
+            "CAMPAIGN // LINKED"
+            if self.save_manager.has_campaign_progress()
+            else "CAMPAIGN // NEW",
+            True,
+            (90, 230, 180)
+            if self.save_manager.has_campaign_progress()
+            else (255, 184, 82),
         )
         mission = self.menu_subtitle_font.render(
             "DEAD STAR CAMPAIGN",
             True,
             (235, 244, 255),
         )
-        status_text = (
-            "SAVE LINKED  //  CONTINUE AVAILABLE"
-            if self.save_manager.has_campaign_progress()
-            else "NEW PILOT PROFILE  //  INTRO REQUIRED"
-        )
-        status_color = (
-            (95, 235, 175)
-            if self.save_manager.has_campaign_progress()
-            else (255, 185, 85)
-        )
-        status = self.menu_label_font.render(
-            status_text,
+        progress_label = self.menu_micro_font.render(
+            "CAMPAIGN PROGRESS",
             True,
-            status_color,
+            (105, 130, 162),
         )
-        objective = self.menu_label_font.render(
-            "OBJECTIVE  //  DEFEND THE GALAXY",
+        progress_value = self.menu_label_font.render(
+            f"{campaign_progress:02d}%",
             True,
-            (155, 170, 195),
+            (100, 220, 255),
         )
 
-        self.screen.blit(header, (panel_rect.x + 20, panel_rect.y + 18))
-        self.screen.blit(mission, (panel_rect.x + 20, panel_rect.y + 61))
-        self.screen.blit(status, (panel_rect.x + 20, panel_rect.y + 103))
-        self.screen.blit(objective, (panel_rect.x + 20, panel_rect.y + 132))
+        self.screen.blit(header, (panel_rect.x + 20, panel_rect.y + 16))
+        self.screen.blit(
+            link_status,
+            (
+                panel_rect.right - link_status.get_width() - 20,
+                panel_rect.y + 20,
+            ),
+        )
+        self.screen.blit(mission, (panel_rect.x + 20, panel_rect.y + 57))
+        self.screen.blit(
+            progress_label,
+            (panel_rect.x + 20, panel_rect.y + 88),
+        )
+        self.screen.blit(
+            progress_value,
+            (
+                panel_rect.right - progress_value.get_width() - 20,
+                panel_rect.y + 84,
+            ),
+        )
 
-    # Deseneaza carcasa de sticla din jurul butoanelor principale.
-    def _draw_menu_navigation_panel(self):
+        # Bara segmentată arată exact cât din călătoria cinematică a fost parcurs.
+        segment_count = len(scene_order)
+        segment_gap = 4
+        progress_x = panel_rect.x + 20
+        progress_y = panel_rect.y + 108
+        progress_width = panel_rect.width - 40
+        segment_width = (
+            progress_width - segment_gap * (segment_count - 1)
+        ) // segment_count
+        active_segments = scene_index + 1
+        if not self.save_manager.has_campaign_progress():
+            active_segments = 0
+
+        for segment_index in range(segment_count):
+            segment_rect = pygame.Rect(
+                progress_x
+                + segment_index * (segment_width + segment_gap),
+                progress_y,
+                segment_width,
+                7,
+            )
+            if segment_index < active_segments:
+                segment_color = (
+                    70 + min(70, segment_index * 8),
+                    185 + min(45, segment_index * 5),
+                    255,
+                )
+            else:
+                segment_color = (28, 55, 82)
+            pygame.draw.rect(
+                self.screen,
+                segment_color,
+                segment_rect,
+                border_radius=3,
+            )
+
+        card_y = panel_rect.y + 130
+        card_gap = 8
+        card_width = 125
+        card_height = 58
+        card_data = (
+            (
+                "CURRENT SECTOR",
+                sector_names.get(current_scene, "UNKNOWN"),
+            ),
+            (
+                "CHECKPOINT",
+                f"{max(0, int(saved_data.get('checkpoint', 0))):02d}",
+            ),
+            (
+                "BEST SCORE",
+                self._format_menu_score(
+                    saved_data.get("highest_score", 0)
+                ),
+            ),
+        )
+        for card_index, (card_label, card_value) in enumerate(card_data):
+            card_rect = pygame.Rect(
+                panel_rect.x
+                + 20
+                + card_index * (card_width + card_gap),
+                card_y,
+                card_width,
+                card_height,
+            )
+            card_surface = pygame.Surface(
+                card_rect.size,
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                card_surface,
+                (8, 22, 44, 210),
+                card_surface.get_rect(),
+                border_radius=8,
+            )
+            pygame.draw.rect(
+                card_surface,
+                (50, 115, 160, 120),
+                card_surface.get_rect(),
+                1,
+                border_radius=8,
+            )
+            self.screen.blit(card_surface, card_rect.topleft)
+
+            card_label_surface = self.menu_micro_font.render(
+                card_label,
+                True,
+                (92, 116, 150),
+            )
+            card_value_surface = self.menu_label_font.render(
+                card_value,
+                True,
+                (205, 232, 248),
+            )
+            if card_value_surface.get_width() > card_width - 10:
+                card_value_surface = self.menu_micro_font.render(
+                    card_value,
+                    True,
+                    (205, 232, 248),
+                )
+            self.screen.blit(
+                card_label_surface,
+                (
+                    card_rect.centerx
+                    - card_label_surface.get_width() // 2,
+                    card_rect.y + 9,
+                ),
+            )
+            self.screen.blit(
+                card_value_surface,
+                (
+                    card_rect.centerx
+                    - card_value_surface.get_width() // 2,
+                    card_rect.y + 29,
+                ),
+            )
+
+        ship_status = self.menu_micro_font.render(
+            "GF-01 DEFENDER  //  COMBAT SYSTEMS NOMINAL",
+            True,
+            (88, 218, 180),
+        )
+        self.screen.blit(
+            ship_status,
+            (
+                panel_rect.x + 20,
+                panel_rect.bottom - 18,
+            ),
+        )
+
+    # Creează docul holografic din spatele navei expuse în meniu.
+    def _draw_menu_ship_showcase(self):
+        showcase_rect = pygame.Rect(50, 452, 325, 224)
+        showcase = pygame.Surface(
+            showcase_rect.size,
+            pygame.SRCALPHA,
+        )
+        center_x = 162
+        platform_y = 188
+        animation_time = pygame.time.get_ticks() * 0.001
+
+        pygame.draw.polygon(
+            showcase,
+            (35, 175, 255, 12),
+            (
+                (center_x - 42, 16),
+                (center_x + 42, 16),
+                (center_x + 116, platform_y),
+                (center_x - 116, platform_y),
+            ),
+        )
+        for beam_offset in (-62, -31, 0, 31, 62):
+            pygame.draw.line(
+                showcase,
+                (70, 190, 255, 28),
+                (center_x + beam_offset // 3, 25),
+                (center_x + beam_offset, platform_y),
+                1,
+            )
+
+        for glow_index in range(5, 0, -1):
+            glow_rect = pygame.Rect(
+                center_x - 123 - glow_index * 3,
+                platform_y - 22 - glow_index,
+                246 + glow_index * 6,
+                44 + glow_index * 2,
+            )
+            pygame.draw.ellipse(
+                showcase,
+                (30, 145, 255, 7 + glow_index * 4),
+                glow_rect,
+            )
+
+        pygame.draw.ellipse(
+            showcase,
+            (8, 24, 52, 205),
+            pygame.Rect(center_x - 124, platform_y - 23, 248, 46),
+        )
+        pygame.draw.ellipse(
+            showcase,
+            (65, 195, 255, 180),
+            pygame.Rect(center_x - 124, platform_y - 23, 248, 46),
+            2,
+        )
+        pygame.draw.ellipse(
+            showcase,
+            (125, 230, 255, 110),
+            pygame.Rect(center_x - 90, platform_y - 15, 180, 30),
+            1,
+        )
+
+        arc_rect = pygame.Rect(center_x - 137, platform_y - 29, 274, 58)
+        for arc_index in range(3):
+            arc_start = animation_time * 0.8 + arc_index * math.tau / 3
+            pygame.draw.arc(
+                showcase,
+                (105, 225, 255, 210),
+                arc_rect,
+                arc_start,
+                arc_start + 0.72,
+                3,
+            )
+
+        for grid_offset in range(-100, 101, 25):
+            pygame.draw.line(
+                showcase,
+                (65, 155, 215, 38),
+                (center_x + grid_offset, platform_y),
+                (center_x + int(grid_offset * 0.76), platform_y + 20),
+                1,
+            )
+        self.screen.blit(showcase, showcase_rect.topleft)
+
+    # Desenează scanarea și eticheta tehnică peste nava din doc.
+    def _draw_menu_ship_scan_overlay(self):
+        ship_rect = self.menu_player.rect
+        scan_progress = (
+            pygame.time.get_ticks() * 0.055
+        ) % max(1, ship_rect.height)
+        scan_y = int(ship_rect.y + scan_progress)
+
+        scan_glow = pygame.Surface((170, 16), pygame.SRCALPHA)
+        pygame.draw.rect(
+            scan_glow,
+            (65, 215, 255, 24),
+            scan_glow.get_rect(),
+            border_radius=8,
+        )
+        pygame.draw.line(
+            scan_glow,
+            (170, 245, 255, 205),
+            (12, 8),
+            (158, 8),
+            1,
+        )
+        self.screen.blit(
+            scan_glow,
+            (ship_rect.centerx - 85, scan_y - 8),
+        )
+
+        bracket_rect = ship_rect.inflate(30, 18)
+        bracket_length = 15
+        bracket_color = (75, 205, 255, 150)
+        for corner_x, direction_x in (
+            (bracket_rect.left, 1),
+            (bracket_rect.right, -1),
+        ):
+            for corner_y, direction_y in (
+                (bracket_rect.top, 1),
+                (bracket_rect.bottom, -1),
+            ):
+                pygame.draw.line(
+                    self.screen,
+                    bracket_color,
+                    (corner_x, corner_y),
+                    (corner_x + direction_x * bracket_length, corner_y),
+                    1,
+                )
+                pygame.draw.line(
+                    self.screen,
+                    bracket_color,
+                    (corner_x, corner_y),
+                    (corner_x, corner_y + direction_y * bracket_length),
+                    1,
+                )
+
+        connector_start = (
+            bracket_rect.right,
+            bracket_rect.centery - 2,
+        )
+        connector_middle = (318, connector_start[1])
+        connector_end = (342, connector_start[1] - 18)
+        pygame.draw.line(
+            self.screen,
+            (70, 185, 230, 130),
+            connector_start,
+            connector_middle,
+            1,
+        )
+        pygame.draw.line(
+            self.screen,
+            (70, 185, 230, 130),
+            connector_middle,
+            connector_end,
+            1,
+        )
+        ship_label = self.menu_micro_font.render(
+            "GF-01 // READY",
+            True,
+            (115, 220, 250),
+        )
+        hull_label = self.menu_micro_font.render(
+            "HULL LINK NOMINAL",
+            True,
+            (85, 205, 165),
+        )
+        self.screen.blit(ship_label, (347, connector_end[1] - 7))
+        self.screen.blit(hull_label, (347, connector_end[1] + 9))
+
+    # Desenează carcasa holografică și protocolul selectat din meniul principal.
+    def _draw_menu_navigation_panel(
+        self,
+        mouse_position,
+        menu_buttons,
+    ):
         navigation_panel = pygame.Rect(
             self.width - 464,
             165,
             418,
             460,
         )
+
+        # Umbra separă panoul de nebuloasa luminoasă fără să ascundă fundalul.
+        shadow_surface = pygame.Surface(
+            (
+                navigation_panel.width + 28,
+                navigation_panel.height + 28,
+            ),
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            shadow_surface,
+            (0, 0, 10, 125),
+            shadow_surface.get_rect(),
+            border_radius=25,
+        )
+        self.screen.blit(
+            shadow_surface,
+            (
+                navigation_panel.x - 14,
+                navigation_panel.y - 10,
+            ),
+        )
+
         panel_surface = pygame.Surface(
             navigation_panel.size,
             pygame.SRCALPHA,
         )
         pygame.draw.rect(
             panel_surface,
-            (4, 9, 25, 218),
+            (3, 9, 25, 232),
             panel_surface.get_rect(),
             border_radius=18,
+        )
+
+        # O a doua placă translucidă creează profunzime în interiorul panoului.
+        pygame.draw.rect(
+            panel_surface,
+            (12, 29, 58, 58),
+            pygame.Rect(9, 9, navigation_panel.width - 18, 64),
+            border_radius=13,
         )
         pygame.draw.rect(
             panel_surface,
-            (100, 70, 180, 110),
+            (94, 75, 190, 135),
             panel_surface.get_rect(),
             2,
             border_radius=18,
         )
+
+        # Muchiile scurte sugerează un terminal militar, nu o fereastră simplă.
+        corner_color = (75, 210, 255, 205)
+        corner_length = 27
+        for corner_x, direction in (
+            (18, 1),
+            (navigation_panel.width - 18, -1),
+        ):
+            pygame.draw.line(
+                panel_surface,
+                corner_color,
+                (corner_x, 1),
+                (corner_x + direction * corner_length, 1),
+                3,
+            )
+            pygame.draw.line(
+                panel_surface,
+                corner_color,
+                (corner_x, 1),
+                (corner_x, 15),
+                2,
+            )
+
         pygame.draw.line(
             panel_surface,
             (80, 205, 255, 225),
-            # Linia sta sub titlul panoului, dar deasupra lui CONTINUE.
             (24, 46),
-            (220, 46),
+            (240, 46),
             2,
+        )
+        pygame.draw.line(
+            panel_surface,
+            (120, 75, 205, 95),
+            (240, 46),
+            (navigation_panel.width - 24, 46),
+            1,
         )
         self.screen.blit(
             panel_surface,
             navigation_panel.topleft,
         )
 
+        pygame.draw.circle(
+            self.screen,
+            (85, 225, 255),
+            (
+                navigation_panel.x + 26,
+                navigation_panel.y + 27,
+            ),
+            4,
+        )
         label = self.menu_label_font.render(
             "COMMAND NAVIGATION",
             True,
             (115, 205, 245),
         )
-        hint = self.menu_label_font.render(
-            "SELECT MISSION PROTOCOL",
+        online_label = self.menu_micro_font.render(
+            "LINK // ONLINE",
             True,
-            (105, 120, 150),
+            (92, 225, 178),
         )
         self.screen.blit(
             label,
-            (navigation_panel.x + 26, navigation_panel.y + 20),
+            (navigation_panel.x + 40, navigation_panel.y + 20),
         )
         self.screen.blit(
-            hint,
-            (navigation_panel.x + 26, navigation_panel.bottom - 43),
+            online_label,
+            (
+                navigation_panel.right
+                - online_label.get_width()
+                - 24,
+                navigation_panel.y + 22,
+            ),
         )
+
+        selected_action = menu_buttons[0][2]
+        for button_rect, _button_text, action in menu_buttons:
+            if button_rect.collidepoint(mouse_position):
+                selected_action = action
+                break
+
+        descriptions = {
+            "continue": "RESUME FROM LAST SAFE CHECKPOINT",
+            "play": "BEGIN THE GALAXY DEFENDER CAMPAIGN",
+            "new_game": "RESTART CAMPAIGN FROM THE HOMEWORLD",
+            "leaderboard": "VIEW THE TOP GALACTIC DEFENDERS",
+            "settings": "CONFIGURE DISPLAY AND AUDIO SYSTEMS",
+            "exit": "CLOSE THE COMMAND INTERFACE",
+        }
+        status_label = self.menu_micro_font.render(
+            "SELECTED PROTOCOL",
+            True,
+            (92, 112, 146),
+        )
+        protocol_text = self.menu_protocol_font.render(
+            descriptions[selected_action],
+            True,
+            (155, 205, 235),
+        )
+        lowest_button_bottom = max(
+            button_rect.bottom
+            for button_rect, _button_text, _action in menu_buttons
+        )
+        status_y = max(
+            navigation_panel.bottom - 50,
+            lowest_button_bottom + 10,
+        )
+        self.screen.blit(
+            status_label,
+            (navigation_panel.x + 41, status_y),
+        )
+        self.screen.blit(
+            protocol_text,
+            (navigation_panel.x + 41, status_y + 17),
+        )
+
+        # Punctul pulsează discret și confirmă că selecția este activă.
+        pulse = (
+            math.sin(pygame.time.get_ticks() * 0.006) + 1.0
+        ) / 2.0
+        pygame.draw.circle(
+            self.screen,
+            (45, 130, 175),
+            (navigation_panel.x + 25, status_y + 20),
+            7,
+        )
+        pygame.draw.circle(
+            self.screen,
+            (90, 225, 255),
+            (navigation_panel.x + 25, status_y + 20),
+            3 + int(pulse * 2),
+        )
+
+    # Desenează o pictogramă vectorială, astfel încât meniul nu cere asset-uri noi.
+    def _draw_menu_action_icon(
+        self,
+        surface,
+        action,
+        center,
+        color,
+    ):
+        center_x, center_y = center
+
+        if action in ("continue", "play"):
+            pygame.draw.polygon(
+                surface,
+                color,
+                (
+                    (center_x - 5, center_y - 8),
+                    (center_x + 8, center_y),
+                    (center_x - 5, center_y + 8),
+                ),
+            )
+
+        elif action == "new_game":
+            pygame.draw.circle(surface, color, center, 9, 2)
+            pygame.draw.line(
+                surface,
+                color,
+                (center_x - 5, center_y),
+                (center_x + 5, center_y),
+                2,
+            )
+            pygame.draw.line(
+                surface,
+                color,
+                (center_x, center_y - 5),
+                (center_x, center_y + 5),
+                2,
+            )
+
+        elif action == "leaderboard":
+            for bar_index, bar_height in enumerate((7, 13, 19)):
+                bar_rect = pygame.Rect(
+                    center_x - 11 + bar_index * 8,
+                    center_y + 9 - bar_height,
+                    5,
+                    bar_height,
+                )
+                pygame.draw.rect(
+                    surface,
+                    color,
+                    bar_rect,
+                    border_radius=2,
+                )
+
+        elif action == "settings":
+            pygame.draw.circle(surface, color, center, 8, 2)
+            pygame.draw.circle(surface, color, center, 3, 2)
+            for offset_x, offset_y in (
+                (0, -12),
+                (0, 12),
+                (-12, 0),
+                (12, 0),
+            ):
+                pygame.draw.line(
+                    surface,
+                    color,
+                    (
+                        center_x + int(offset_x * 0.62),
+                        center_y + int(offset_y * 0.62),
+                    ),
+                    (center_x + offset_x, center_y + offset_y),
+                    2,
+                )
+
+        elif action == "exit":
+            pygame.draw.arc(
+                surface,
+                color,
+                pygame.Rect(center_x - 10, center_y - 9, 20, 20),
+                math.radians(35),
+                math.radians(325),
+                2,
+            )
+            pygame.draw.line(
+                surface,
+                color,
+                (center_x, center_y - 12),
+                (center_x, center_y + 1),
+                3,
+            )
+
+    # Butonul principal are un nivel vizual distinct și reacționează la hover.
+    def _draw_menu_navigation_button(
+        self,
+        button_rect,
+        button_text,
+        action,
+        mouse_position,
+        primary=False,
+    ):
+        is_hovered = button_rect.collidepoint(mouse_position)
+        pulse = (
+            math.sin(pygame.time.get_ticks() * 0.007) + 1.0
+        ) / 2.0
+        scale_amount = 6 if is_hovered else 0
+        draw_rect = pygame.Rect(
+            button_rect.x - scale_amount // 2,
+            button_rect.y - scale_amount // 2,
+            button_rect.width + scale_amount,
+            button_rect.height + scale_amount,
+        )
+
+        if is_hovered:
+            fill_color = (9, 67, 105, 246)
+            border_color = (95, 225, 255, 245)
+            text_color = (245, 252, 255)
+            icon_color = (150, 240, 255)
+        elif primary:
+            fill_color = (7, 34, 65, 242)
+            border_color = (65, 180, 225, 220)
+            text_color = (220, 242, 255)
+            icon_color = (85, 215, 255)
+        else:
+            fill_color = (7, 16, 37, 235)
+            border_color = (55, 101, 145, 205)
+            text_color = (190, 207, 229)
+            icon_color = (100, 155, 195)
+
+        if is_hovered:
+            glow_surface = pygame.Surface(
+                (draw_rect.width + 24, draw_rect.height + 24),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                glow_surface,
+                (45, 190, 255, 32 + int(pulse * 24)),
+                glow_surface.get_rect(),
+                border_radius=16,
+            )
+            self.screen.blit(
+                glow_surface,
+                (draw_rect.x - 12, draw_rect.y - 12),
+            )
+
+        button_surface = pygame.Surface(
+            draw_rect.size,
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            button_surface,
+            fill_color,
+            button_surface.get_rect(),
+            border_radius=10,
+        )
+
+        # Reflexia diagonală se deplasează numai peste protocolul selectat.
+        if is_hovered:
+            scan_x = int(
+                (pygame.time.get_ticks() * 0.10)
+                % (draw_rect.width + 100)
+            ) - 50
+            pygame.draw.polygon(
+                button_surface,
+                (120, 230, 255, 22),
+                (
+                    (scan_x - 28, 0),
+                    (scan_x + 4, 0),
+                    (scan_x + 34, draw_rect.height),
+                    (scan_x + 2, draw_rect.height),
+                ),
+            )
+
+        pygame.draw.rect(
+            button_surface,
+            border_color,
+            button_surface.get_rect(),
+            2,
+            border_radius=10,
+        )
+        pygame.draw.line(
+            button_surface,
+            (*icon_color[:3], 245),
+            (1, 10),
+            (1, draw_rect.height - 10),
+            4 if (is_hovered or primary) else 2,
+        )
+
+        icon_tile = pygame.Rect(
+            12,
+            draw_rect.height // 2 - 17,
+            34,
+            34,
+        )
+        pygame.draw.rect(
+            button_surface,
+            (12, 30, 56, 205),
+            icon_tile,
+            border_radius=8,
+        )
+        pygame.draw.rect(
+            button_surface,
+            (*icon_color[:3], 135),
+            icon_tile,
+            1,
+            border_radius=8,
+        )
+        self._draw_menu_action_icon(
+            button_surface,
+            action,
+            icon_tile.center,
+            icon_color,
+        )
+
+        button_label = self.menu_button_font.render(
+            button_text,
+            True,
+            text_color,
+        )
+        button_surface.blit(
+            button_label,
+            (
+                59,
+                draw_rect.height // 2
+                - button_label.get_height() // 2,
+            ),
+        )
+
+        # Chevron-ul este desenat din linii clare, fără aspectul vechiului simbol >.
+        chevron_x = draw_rect.width - 24
+        chevron_y = draw_rect.height // 2
+        pygame.draw.line(
+            button_surface,
+            icon_color,
+            (chevron_x - 5, chevron_y - 6),
+            (chevron_x + 1, chevron_y),
+            2,
+        )
+        pygame.draw.line(
+            button_surface,
+            icon_color,
+            (chevron_x + 1, chevron_y),
+            (chevron_x - 5, chevron_y + 6),
+            2,
+        )
+        if is_hovered:
+            pygame.draw.circle(
+                button_surface,
+                (170, 245, 255),
+                (chevron_x + 6, chevron_y),
+                2,
+            )
+
+        self.screen.blit(button_surface, draw_rect.topleft)
 
     # Returnează butoanele potrivite pentru progresul salvat.
     def _get_menu_buttons(self):
