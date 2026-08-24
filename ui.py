@@ -350,6 +350,7 @@ def draw_game_ui(
     multiplier,
     player=None,
     stage=1,
+    combo=0,
 ):
     screen_width = screen.get_width()
     pulse = (
@@ -507,11 +508,22 @@ def draw_game_ui(
         208,
         124,
     )
-    combo_color = (
-        (255, 195, 65)
-        if multiplier > 1
-        else (75, 190, 235)
-    )
+    if combo >= 100:
+        combo_tier = "GODLIKE"
+        combo_color = (70, 240, 225)
+    elif combo >= 50:
+        combo_tier = "LEGENDARY"
+        combo_color = (255, 195, 65)
+    elif combo >= 25:
+        combo_tier = "UNTOUCHABLE"
+        combo_color = (205, 95, 255)
+    else:
+        combo_tier = "COMBAT LINK"
+        combo_color = (
+            (255, 195, 65)
+            if combo >= 10
+            else (75, 190, 235)
+        )
     _draw_glass_panel(
         screen,
         right_panel,
@@ -538,12 +550,12 @@ def draw_game_ui(
     )
 
     combo_label = label_font.render(
-        "COMBAT LINK",
+        combo_tier,
         True,
-        (145, 150, 175),
+        combo_color if combo >= 10 else (145, 150, 175),
     )
     combo_value = small_value_font.render(
-        f"x{multiplier}",
+        f"C{combo:03d}  x{multiplier}",
         True,
         combo_color,
     )
@@ -559,8 +571,10 @@ def draw_game_ui(
         ),
     )
 
-    if multiplier > 1:
-        glow_alpha = int(45 + pulse * 65)
+    if combo >= 10:
+        tier_intensity = 1.45 if combo >= 100 else 1.0
+        glow_alpha = int((45 + pulse * 65) * tier_intensity)
+        glow_alpha = min(175, glow_alpha)
         glow_surface = pygame.Surface(
             (right_panel.width, right_panel.height),
             pygame.SRCALPHA,

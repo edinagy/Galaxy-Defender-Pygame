@@ -67,6 +67,8 @@ class Gameplay:
         self.result_number_font = pygame.font.Font(None, 50)
         self.result_label_font = pygame.font.Font(None, 21)
         self.result_button_font = pygame.font.Font(None, 28)
+        self.combo_title_font = pygame.font.Font(None, 62)
+        self.combo_subtitle_font = pygame.font.Font(None, 27)
 
         self.shoot_sound = shoot_sound
         self.enemy_destroy_sound = enemy_destroy_sound
@@ -181,6 +183,16 @@ class Gameplay:
         self.combo = 0
         self.combo_timer = 0
         self.multiplier = 1
+        self.best_combo = 0
+        self.last_combo_milestone = 0
+        self.combo_milestone_timer = 0
+        self.combo_milestone_duration = 126
+        self.combo_milestone_title = ""
+        self.combo_milestone_value = 0
+        self.combo_lost_timer = 0
+        self.combo_lost_duration = 96
+        self.combo_lost_value = 0
+        self.combo_break_shards = []
 
         # Fiecare nivel mai puternic lansează mai multe proiectile, așa că are
         # o cadență puțin mai lentă. Astfel arma evoluează fără să elimine
@@ -653,6 +665,8 @@ class Gameplay:
             self.weapon_drop_cooldown -= 1
 
         # Efectele vizuale expiră chiar dacă lupta tocmai s-a încheiat.
+        self._update_combo_feedback()
+
         if self.damage_flash_timer > 0:
             self.damage_flash_timer -= 1
 
@@ -814,12 +828,7 @@ class Gameplay:
 
         # Imaginea navei include mult spațiu transparent.
         # Un dreptunghi mai mic oferă o coliziune corectă jucătorului.
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         event_hit = (
             self.space_event_manager.update(
@@ -897,9 +906,7 @@ class Gameplay:
         self.player.invincible = True
         # 105 cadre înseamnă aproximativ 1,75 secunde la 60 FPS.
         self.player.invincible_timer = 105
-        self.combo = 0
-        self.combo_timer = 0
-        self.multiplier = 1
+        self._break_combo()
 
         self.damage_flash_timer = self.damage_flash_duration
         self._trigger_screen_shake(
@@ -1686,6 +1693,72 @@ class Gameplay:
         # jucătorul pierde efectiv o viață.
         return
 
+    def _update_combo_feedback(self):
+        if self.combo_milestone_timer > 0:
+            self.combo_milestone_timer -= 1
+        if self.combo_lost_timer > 0:
+            self.combo_lost_timer -= 1
+
+        for shard in self.combo_break_shards[:]:
+            shard["x"] += shard["dx"]
+            shard["y"] += shard["dy"]
+            shard["dx"] *= 0.975
+            shard["dy"] = shard["dy"] * 0.975 + 0.035
+            shard["rotation"] += shard["spin"]
+            shard["life"] -= 1
+            if shard["life"] <= 0:
+                self.combo_break_shards.remove(shard)
+
+    @staticmethod
+    def _get_combo_tier(combo_value):
+        if combo_value >= 100:
+            return "GODLIKE", (70, 240, 225)
+        if combo_value >= 50:
+            return "LEGENDARY", (255, 195, 65)
+        if combo_value >= 25:
+            return "UNTOUCHABLE", (205, 95, 255)
+        return "COMBAT LINK", (75, 195, 255)
+
+    def _start_combo_milestone(self, threshold):
+        title, _color = self._get_combo_tier(threshold)
+        self.combo_milestone_title = title
+        self.combo_milestone_value = threshold
+        self.combo_milestone_timer = self.combo_milestone_duration
+
+    # Pierderea unei vieți rupe seria și împrăștie vizual Combat Link-ul.
+    def _break_combo(self):
+        if self.combo > 0:
+            self.combo_lost_value = self.combo
+            self.combo_lost_timer = self.combo_lost_duration
+            self.combo_milestone_timer = 0
+            self.combo_break_shards = []
+            shard_origin_x = self.width // 2
+            shard_origin_y = 255
+            for shard_index in range(18):
+                angle = (
+                    shard_index * math.tau / 18
+                    + random.uniform(-0.12, 0.12)
+                )
+                speed = random.uniform(2.3, 6.2)
+                self.combo_break_shards.append(
+                    {
+                        "x": float(shard_origin_x),
+                        "y": float(shard_origin_y),
+                        "dx": math.cos(angle) * speed,
+                        "dy": math.sin(angle) * speed,
+                        "rotation": angle,
+                        "spin": random.uniform(-0.18, 0.18),
+                        "size": random.randint(5, 12),
+                        "life": random.randint(54, 88),
+                        "maximum_life": 88,
+                    }
+                )
+
+        self.combo = 0
+        self.combo_timer = 0
+        self.multiplier = 1
+        self.last_combo_milestone = 0
+
     def _update_multiplier(self):
         if self.combo >= 50:
             self.multiplier = 5
@@ -1695,6 +1768,17 @@ class Gameplay:
             self.multiplier = 2
         else:
             self.multiplier = 1
+
+        self.best_combo = max(self.best_combo, self.combo)
+        reached_milestones = [
+            threshold
+            for threshold in (10, 25, 50, 100)
+            if self.last_combo_milestone < threshold <= self.combo
+        ]
+        if reached_milestones:
+            newest_milestone = reached_milestones[-1]
+            self.last_combo_milestone = newest_milestone
+            self._start_combo_milestone(newest_milestone)
 
     def _update_difficulty(self):
         # Ritmul pornește relaxat și crește în principal odată cu wave-ul.
@@ -2418,9 +2502,7 @@ class Gameplay:
 
             self.lives -= 1
             self.player.downgrade_weapon()
-            self.combo = 0
-            self.combo_timer = 0
-            self.multiplier = 1
+            self._break_combo()
 
     def _handle_collisions(self):
         self._player_bullet_missile_collisions()
@@ -2518,12 +2600,7 @@ class Gameplay:
 
     # Impactul unei rachete armate produce damage si o elimina din arena.
     def _missile_player_collisions(self):
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         for missile in self.homing_missiles[:]:
             if (
@@ -2595,12 +2672,7 @@ class Gameplay:
 
     # Proiectilele Crossfire folosesc hitbox-ul redus al navei.
     def _crossfire_bullet_player_collisions(self):
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         for crossfire_bullet in self.crossfire_bullets[:]:
             if not crossfire_bullet.rect.colliderect(
@@ -2690,12 +2762,7 @@ class Gameplay:
 
     # Coliziunea directă distruge asteroidul și afectează nava.
     def _asteroid_player_collisions(self):
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         for asteroid in self.storm_asteroids[:]:
             if not player_hitbox.colliderect(
@@ -3151,9 +3218,10 @@ class Gameplay:
                 break
 
     def _enemy_bullet_player_collisions(self):
+        player_hitbox = self.player.get_hitbox()
         for enemy_bullet in self.enemy_bullets[:]:
             if not enemy_bullet.rect.colliderect(
-                self.player.rect
+                player_hitbox
             ):
                 continue
 
@@ -3169,12 +3237,7 @@ class Gameplay:
 
     # Proiectilele bossului folosesc hitbox-ul redus al navei.
     def _boss_projectile_player_collisions(self):
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         for boss_projectile in self.boss_projectiles[:]:
             if not boss_projectile.rect.colliderect(
@@ -3192,12 +3255,7 @@ class Gameplay:
         if self.boss is None:
             return
 
-        player_hitbox = pygame.Rect(
-            int(self.player.x + 38),
-            int(self.player.y + 25),
-            self.player.image.get_width() - 76,
-            self.player.image.get_height() - 55,
-        )
+        player_hitbox = self.player.get_hitbox()
 
         for laser in self.boss.lasers:
             if (
@@ -3487,6 +3545,7 @@ class Gameplay:
                 self.multiplier,
                 self.player,
                 self.stage,
+                self.combo,
             )
             self._draw_victory()
         elif not self.game_over:
@@ -3499,6 +3558,7 @@ class Gameplay:
                 self.multiplier,
                 self.player,
                 self.stage,
+                self.combo,
             )
 
             if self.battle_intro_timer > 0:
@@ -3512,6 +3572,8 @@ class Gameplay:
 
             if self.stage_transition_timer > 0:
                 self._draw_stage_transition()
+
+            self._draw_combo_feedback()
         else:
             self._draw_game_over()
 
@@ -3689,6 +3751,176 @@ class Gameplay:
         )
 
     # Desenează o tentă roșie care dispare rapid după pierderea unei vieți.
+    def _draw_combo_feedback(self):
+        if (
+            self.combo_milestone_timer <= 0
+            and self.combo_lost_timer <= 0
+            and not self.combo_break_shards
+        ):
+            return
+
+        overlay = pygame.Surface(
+            (self.width, self.height),
+            pygame.SRCALPHA,
+        )
+
+        if self.combo_milestone_timer > 0:
+            elapsed = (
+                self.combo_milestone_duration
+                - self.combo_milestone_timer
+            )
+            visibility = min(1.0, elapsed / 12) * min(
+                1.0,
+                self.combo_milestone_timer / 28,
+            )
+            _tier, accent_color = self._get_combo_tier(
+                self.combo_milestone_value
+            )
+            panel_width = 560
+            panel_height = 104
+            panel_rect = pygame.Rect(
+                self.width // 2 - panel_width // 2,
+                145,
+                panel_width,
+                panel_height,
+            )
+            pygame.draw.rect(
+                overlay,
+                (5, 7, 25, int(205 * visibility)),
+                panel_rect,
+                border_radius=12,
+            )
+            pygame.draw.rect(
+                overlay,
+                (*accent_color, int(225 * visibility)),
+                panel_rect,
+                3,
+                border_radius=12,
+            )
+
+            pulse_radius = int(70 + elapsed * 2.4)
+            pygame.draw.circle(
+                overlay,
+                (*accent_color, int(115 * visibility)),
+                panel_rect.center,
+                pulse_radius,
+                3,
+            )
+            for ray_index in range(12):
+                angle = ray_index * math.tau / 12 + elapsed * 0.018
+                ray_start = (
+                    int(panel_rect.centerx + math.cos(angle) * 48),
+                    int(panel_rect.centery + math.sin(angle) * 48),
+                )
+                ray_end = (
+                    int(panel_rect.centerx + math.cos(angle) * 86),
+                    int(panel_rect.centery + math.sin(angle) * 86),
+                )
+                pygame.draw.line(
+                    overlay,
+                    (*accent_color, int(80 * visibility)),
+                    ray_start,
+                    ray_end,
+                    2,
+                )
+
+            title = self.combo_title_font.render(
+                self.combo_milestone_title,
+                True,
+                accent_color,
+            )
+            subtitle = self.combo_subtitle_font.render(
+                (
+                    f"{self.combo_milestone_value} HIT CHAIN"
+                    f"  //  SCORE LINK x{self.multiplier}"
+                ),
+                True,
+                (225, 240, 250),
+            )
+            title.set_alpha(int(255 * visibility))
+            subtitle.set_alpha(int(255 * visibility))
+            overlay.blit(
+                title,
+                (
+                    panel_rect.centerx - title.get_width() // 2,
+                    panel_rect.y + 10,
+                ),
+            )
+            overlay.blit(
+                subtitle,
+                (
+                    panel_rect.centerx - subtitle.get_width() // 2,
+                    panel_rect.y + 69,
+                ),
+            )
+
+        if self.combo_lost_timer > 0:
+            elapsed = self.combo_lost_duration - self.combo_lost_timer
+            visibility = min(1.0, elapsed / 8) * min(
+                1.0,
+                self.combo_lost_timer / 24,
+            )
+            lost_title = self.combo_title_font.render(
+                "COMBO LOST",
+                True,
+                (255, 70, 105),
+            )
+            lost_value = self.combo_subtitle_font.render(
+                f"{self.combo_lost_value} CHAIN BROKEN",
+                True,
+                (255, 205, 220),
+            )
+            lost_title.set_alpha(int(255 * visibility))
+            lost_value.set_alpha(int(255 * visibility))
+            overlay.blit(
+                lost_title,
+                (
+                    self.width // 2 - lost_title.get_width() // 2,
+                    205,
+                ),
+            )
+            overlay.blit(
+                lost_value,
+                (
+                    self.width // 2 - lost_value.get_width() // 2,
+                    266,
+                ),
+            )
+
+        for shard in self.combo_break_shards:
+            life_ratio = shard["life"] / shard["maximum_life"]
+            size = shard["size"]
+            angle = shard["rotation"]
+            center_x = int(shard["x"])
+            center_y = int(shard["y"])
+            points = [
+                (
+                    int(center_x + math.cos(angle) * size),
+                    int(center_y + math.sin(angle) * size),
+                ),
+                (
+                    int(center_x + math.cos(angle + 2.35) * size * 0.7),
+                    int(center_y + math.sin(angle + 2.35) * size * 0.7),
+                ),
+                (
+                    int(center_x + math.cos(angle - 2.35) * size * 0.7),
+                    int(center_y + math.sin(angle - 2.35) * size * 0.7),
+                ),
+            ]
+            pygame.draw.polygon(
+                overlay,
+                (255, 65, 110, int(220 * life_ratio)),
+                points,
+            )
+            pygame.draw.polygon(
+                overlay,
+                (255, 190, 220, int(180 * life_ratio)),
+                points,
+                1,
+            )
+
+        self.screen.blit(overlay, (0, 0))
+
     def _draw_damage_flash(self):
         if self.damage_flash_timer <= 0:
             return
@@ -4487,12 +4719,16 @@ class Gameplay:
         displayed_score = int(self.score * count_progress)
         displayed_wave = max(1, int(self.wave * count_progress))
         displayed_stage = max(1, int(self.stage * count_progress))
+        displayed_best_combo = int(self.best_combo * count_progress)
         displayed_best = int(best_score * count_progress)
         statistics = (
             ("FINAL COMBAT SCORE", self._format_result_number(displayed_score)),
             (
-                "STAGE / HOSTILE WAVE",
-                f"{displayed_stage:02d} / {displayed_wave:02d}",
+                "STAGE / WAVE  //  BEST COMBO",
+                (
+                    f"{displayed_stage:02d}/{displayed_wave:02d}"
+                    f"  //  C{displayed_best_combo}"
+                ),
             ),
             ("GALACTIC BEST SCORE", self._format_result_number(displayed_best)),
         )

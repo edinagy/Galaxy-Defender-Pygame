@@ -128,6 +128,86 @@ class StageProgressionTests(unittest.TestCase):
             stage_two_boss.stage_attack_rate,
             stage_one_boss.stage_attack_rate,
         )
+        self.assertEqual(
+            stage_two_boss.phase_two_threshold,
+            int(stage_two_boss.max_hp * 2 / 3),
+        )
+
+    def test_phase_sovereign_attack_is_exclusive_to_stage_two_plus(self):
+        player_rect = pygame.Rect(610, 610, 32, 44)
+        stage_one_boss = Boss(1280, 720, 1)
+        stage_one_boss.state = "active"
+        stage_one_boss.phase_attack_timer = 9999
+        stage_one_boss._create_attacks(player_rect)
+        self.assertFalse(stage_one_boss.phase_attack_active)
+        self.assertEqual(stage_one_boss.phase_exit_portals, [])
+
+        stage_two_boss = Boss(1280, 720, 2)
+        stage_two_boss.state = "active"
+        stage_two_boss.y = stage_two_boss.target_y
+        stage_two_boss._update_rectangles()
+        stage_two_boss.phase_attack_timer = 345
+        first_frame_projectiles = stage_two_boss._create_attacks(
+            player_rect
+        )
+
+        self.assertEqual(first_frame_projectiles, [])
+        self.assertTrue(stage_two_boss.phase_attack_active)
+        self.assertEqual(len(stage_two_boss.phase_exit_portals), 1)
+        self.assertGreater(stage_two_boss.phase_attack_charge_timer, 0)
+
+        phase_projectiles = []
+        safety_frames = 0
+        while stage_two_boss.phase_attack_active and safety_frames < 500:
+            phase_projectiles.extend(
+                stage_two_boss._create_attacks(player_rect)
+            )
+            safety_frames += 1
+
+        self.assertFalse(stage_two_boss.phase_attack_active)
+        self.assertEqual(len(phase_projectiles), 6)
+        self.assertTrue(
+            all(
+                projectile.projectile_type == "phase"
+                for projectile in phase_projectiles
+            )
+        )
+
+    def test_phase_sovereign_adds_second_exit_from_stage_three(self):
+        boss = Boss(1280, 720, 3)
+        boss.state = "active"
+        boss.phase = 3
+        boss._start_phase_portal_attack(
+            pygame.Rect(610, 610, 32, 44)
+        )
+
+        self.assertEqual(len(boss.phase_exit_portals), 2)
+        self.assertEqual(boss.phase_attack_total_salvos, 3)
+        boss.phase_attack_charge_timer = 0
+        salvo = boss._update_phase_portal_attack()
+        self.assertEqual(len(salvo), 4)
+        self.assertTrue(
+            all(
+                projectile.projectile_type == "phase"
+                for projectile in salvo
+            )
+        )
+
+    def test_phase_sovereign_cancels_portals_during_phase_changes(self):
+        boss = Boss(1280, 720, 2)
+        player_rect = pygame.Rect(610, 610, 32, 44)
+        boss._start_phase_portal_attack(player_rect)
+        self.assertTrue(boss.phase_attack_active)
+
+        boss._start_phase_two()
+        self.assertFalse(boss.phase_attack_active)
+        self.assertEqual(boss.phase_exit_portals, [])
+
+        boss.transition_timer = 0
+        boss._start_phase_portal_attack(player_rect)
+        boss._start_phase_three()
+        self.assertFalse(boss.phase_attack_active)
+        self.assertEqual(boss.phase_exit_portals, [])
 
     def test_combo_persists_until_player_loses_a_life(self):
         gameplay, _saved_scores = self.create_gameplay()
@@ -150,6 +230,50 @@ class StageProgressionTests(unittest.TestCase):
         gameplay._damage_player()
         self.assertEqual(gameplay.combo, 0)
         self.assertEqual(gameplay.multiplier, 1)
+
+    def test_combo_milestones_continue_beyond_x5_multiplier(self):
+        gameplay, _saved_scores = self.create_gameplay()
+
+        milestone_expectations = (
+            (10, 2, "COMBAT LINK"),
+            (25, 3, "UNTOUCHABLE"),
+            (50, 5, "LEGENDARY"),
+            (100, 5, "GODLIKE"),
+        )
+        for combo_value, multiplier, title in milestone_expectations:
+            gameplay.combo = combo_value
+            gameplay._update_multiplier()
+            self.assertEqual(gameplay.multiplier, multiplier)
+            self.assertEqual(gameplay.combo_milestone_title, title)
+            self.assertGreater(gameplay.combo_milestone_timer, 0)
+
+        gameplay.combo = 173
+        gameplay._update_multiplier()
+        self.assertEqual(gameplay.combo, 173)
+        self.assertEqual(gameplay.multiplier, 5)
+        self.assertEqual(gameplay.best_combo, 173)
+
+    def test_lost_combo_records_chain_and_creates_shatter_effect(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        gameplay.combo = 87
+        gameplay._update_multiplier()
+        starting_lives = gameplay.lives
+
+        damage_was_applied = gameplay._damage_player()
+
+        self.assertTrue(damage_was_applied)
+        self.assertEqual(gameplay.lives, starting_lives - 1)
+        self.assertEqual(gameplay.combo, 0)
+        self.assertEqual(gameplay.multiplier, 1)
+        self.assertEqual(gameplay.best_combo, 87)
+        self.assertEqual(gameplay.combo_lost_value, 87)
+        self.assertGreater(gameplay.combo_lost_timer, 0)
+        self.assertEqual(len(gameplay.combo_break_shards), 18)
+
+        gameplay._draw_combo_feedback()
+        for _ in range(gameplay.combo_lost_duration + 5):
+            gameplay._update_combo_feedback()
+        self.assertEqual(gameplay.combo_lost_timer, 0)
 
     def test_shield_hit_does_not_break_combo(self):
         gameplay, _saved_scores = self.create_gameplay()
@@ -232,6 +356,39 @@ class StageProgressionTests(unittest.TestCase):
             gameplay.player.special_energy,
             starting_energy,
         )
+
+    def test_player_core_hitbox_allows_wings_to_dodge_boss_projectiles(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        hitbox = gameplay.player.get_hitbox()
+
+        self.assertEqual(hitbox.size, (32, 44))
+        self.assertEqual(hitbox.center, gameplay.player.rect.center)
+
+        wing_projectile = type("BossProjectile", (), {})()
+        wing_projectile.rect = pygame.Rect(
+            gameplay.player.rect.left + 5,
+            gameplay.player.rect.centery - 5,
+            10,
+            10,
+        )
+        self.assertTrue(
+            wing_projectile.rect.colliderect(gameplay.player.rect)
+        )
+        self.assertFalse(wing_projectile.rect.colliderect(hitbox))
+
+        starting_lives = gameplay.lives
+        gameplay.boss_projectiles = [wing_projectile]
+        gameplay._boss_projectile_player_collisions()
+        self.assertEqual(gameplay.boss_projectiles, [wing_projectile])
+        self.assertEqual(gameplay.lives, starting_lives)
+
+        core_projectile = type("BossProjectile", (), {})()
+        core_projectile.rect = pygame.Rect(0, 0, 8, 8)
+        core_projectile.rect.center = hitbox.center
+        gameplay.boss_projectiles = [core_projectile]
+        gameplay._boss_projectile_player_collisions()
+        self.assertEqual(gameplay.boss_projectiles, [])
+        self.assertEqual(gameplay.lives, starting_lives - 1)
 
     def test_shield_carrier_protects_nearby_enemy_but_not_itself(self):
         gameplay, _saved_scores = self.create_gameplay()

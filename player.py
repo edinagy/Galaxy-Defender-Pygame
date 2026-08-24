@@ -170,6 +170,16 @@ class Player:
             int(self.y),
         )
 
+    # Hitbox-ul de luptă urmărește cockpitul, nu aripile și motoarele navei.
+    # Dimensiunea mică permite trecerea corectă printre salvele dense ale bossului.
+    def get_hitbox(self):
+        hitbox = pygame.Rect(0, 0, 32, 44)
+        hitbox.center = (
+            self.rect.centerx,
+            self.rect.centery,
+        )
+        return hitbox
+
     # Actualizează motoarele și timerele power-up-urilor.
     def update(self):
         self.update_engine()

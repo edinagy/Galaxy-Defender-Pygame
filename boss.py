@@ -31,6 +31,10 @@ class BossProjectile:
             self.radius = 8
             self.color = (255, 45, 110)
             self.damage = 1
+        elif projectile_type == "phase":
+            self.radius = 8
+            self.color = (65, 235, 225)
+            self.damage = 1
         else:
             self.radius = 7
             self.color = (255, 120, 80)
@@ -73,6 +77,7 @@ class BossProjectile:
                 "heavy": 20,
                 "seeker": 18,
                 "core": 16,
+                "phase": 20,
                 "plasma": 14,
             }.get(self.projectile_type, 14)
             self.trail.append(
@@ -133,6 +138,8 @@ class BossProjectile:
             self._draw_seeker(screen, center, direction, perpendicular)
         elif self.projectile_type == "core":
             self._draw_core_shard(screen, center, direction, perpendicular)
+        elif self.projectile_type == "phase":
+            self._draw_phase_shard(screen, center, direction, perpendicular)
         else:
             self._draw_plasma(screen, center, direction, perpendicular)
 
@@ -241,6 +248,42 @@ class BossProjectile:
                 int(center[1] + math.sin(angle) * 15),
             )
             pygame.draw.circle(screen, (255, 145, 205), spark, 2)
+
+    # Proiectilul Phase alternează cyan și magenta ca o ruptură dimensională.
+    def _draw_phase_shard(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (255, 45, 205), 8)
+        tip = self._point(center, direction, perpendicular, 15)
+        tail = self._point(center, direction, perpendicular, -13)
+        left = self._point(center, direction, perpendicular, -2, 9)
+        right = self._point(center, direction, perpendicular, -2, -9)
+
+        pygame.draw.circle(screen, (35, 3, 60), center, 14)
+        pygame.draw.polygon(
+            screen,
+            (225, 35, 190),
+            [tip, left, tail, right],
+        )
+        pygame.draw.line(screen, (55, 235, 225), tail, tip, 6)
+        pygame.draw.line(screen, (240, 255, 255), center, tip, 2)
+
+        echo_distance = 11 + int(
+            3 * abs(math.sin(self.age * 0.24))
+        )
+        for side in (-1, 1):
+            echo_center = self._point(
+                center,
+                direction,
+                perpendicular,
+                -3,
+                side * echo_distance,
+            )
+            pygame.draw.circle(
+                screen,
+                (55, 175, 180),
+                echo_center,
+                3,
+                1,
+            )
 
 
 # Raza verticala are mai intai o avertizare, apoi devine periculoasa.
@@ -514,6 +557,8 @@ class Boss:
             round(1200 * self.stage_health_multiplier)
         )
         self.hp = self.max_hp
+        self.phase_two_threshold = int(self.max_hp * 2 / 3)
+        self.phase_three_threshold = int(self.max_hp / 3)
         self.phase = 1
         self.phase_two = False
         self.phase_three = False
@@ -528,6 +573,17 @@ class Boss:
         self.primary_attack_timer = 0
         self.special_attack_timer = 0
         self.laser_attack_timer = 0
+        self.phase_attack_timer = 0
+        self.phase_attack_active = False
+        self.phase_attack_charge_timer = 0
+        self.phase_attack_charge_duration = 0
+        self.phase_attack_salvos_remaining = 0
+        self.phase_attack_total_salvos = 0
+        self.phase_attack_salvo_timer = 0
+        self.phase_attack_linger_timer = 0
+        self.phase_attack_alternate = False
+        self.phase_locked_target = (screen_width // 2, screen_height - 120)
+        self.phase_exit_portals = []
         self.core_burst_alternate = False
 
         # In faza a doua, corpul este protejat de doua generatoare.
@@ -687,6 +743,11 @@ class Boss:
     def _create_attacks(self, player_rect):
         new_projectiles = []
 
+        # Atacul dimensional rulează singur, astfel încât liniile de avertizare
+        # să nu fie acoperite de lasere sau de alte salve ale bossului.
+        if self.phase_attack_active:
+            return self._update_phase_portal_attack()
+
         # În timpul laserului nu lansăm alte atacuri, însă cronometrele lor
         # avansează lent. Astfel rămâne o rută clară de evitare, fără pauza
         # enormă care exista după dispariția razei.
@@ -695,12 +756,31 @@ class Boss:
                 self.primary_attack_timer += self.stage_attack_rate
             if self.animation_timer % 3 == 0:
                 self.special_attack_timer += self.stage_attack_rate
+                if self.difficulty_stage >= 2:
+                    self.phase_attack_timer += self.stage_attack_rate * 0.5
             return new_projectiles
 
         self.primary_attack_timer += self.stage_attack_rate
         self.special_attack_timer += self.stage_attack_rate
         self.laser_attack_timer += self.stage_attack_rate
+        if self.difficulty_stage >= 2:
+            self.phase_attack_timer += self.stage_attack_rate
         desperation = self.hp <= self.max_hp * 0.10
+
+        phase_attack_delay = {
+            1: 345,
+            2: 305,
+            3: 265,
+        }[self.phase]
+        if (
+            self.difficulty_stage >= 2
+            and self.phase_attack_timer >= phase_attack_delay
+        ):
+            self.primary_attack_timer = 0
+            self.special_attack_timer = 0
+            self.laser_attack_timer = 0
+            self._start_phase_portal_attack(player_rect)
+            return new_projectiles
 
         if self.phase == 1:
             # Prima faza introduce mecanica printr-un singur laser.
@@ -867,6 +947,125 @@ class Boss:
             )
         return projectiles
 
+    # Blochează poziția jucătorului și deschide una sau două ieșiri laterale.
+    def _start_phase_portal_attack(self, player_rect):
+        self.phase_attack_active = True
+        self.phase_attack_charge_duration = max(
+            60,
+            int(105 / self.stage_attack_rate),
+        )
+        self.phase_attack_charge_timer = self.phase_attack_charge_duration
+        self.phase_attack_total_salvos = 2 + (1 if self.phase == 3 else 0)
+        self.phase_attack_salvos_remaining = self.phase_attack_total_salvos
+        self.phase_attack_salvo_timer = 0
+        self.phase_attack_linger_timer = 34
+        self.phase_locked_target = player_rect.center
+        self.phase_attack_alternate = not self.phase_attack_alternate
+        self.phase_exit_portals = []
+
+        exit_count = 1 if self.difficulty_stage == 2 else 2
+        if exit_count == 1:
+            exit_x = (
+                88
+                if self.phase_attack_alternate
+                else self.screen_width - 88
+            )
+            exit_y = max(
+                245,
+                min(
+                    self.screen_height - 185,
+                    player_rect.centery - 145,
+                ),
+            )
+            portal_positions = [(exit_x, exit_y)]
+        else:
+            vertical_shift = 32 if self.phase_attack_alternate else -32
+            portal_positions = [
+                (82, 285 + vertical_shift),
+                (self.screen_width - 82, 390 - vertical_shift),
+            ]
+
+        for portal_x, portal_y in portal_positions:
+            aim_angle = math.atan2(
+                self.phase_locked_target[1] - portal_y,
+                self.phase_locked_target[0] - portal_x,
+            )
+            self.phase_exit_portals.append(
+                {
+                    "x": float(portal_x),
+                    "y": float(portal_y),
+                    "angle": aim_angle,
+                }
+            )
+
+    # După avertizare, fiecare ieșire lansează salve rare și lizibile.
+    def _update_phase_portal_attack(self):
+        if self.phase_attack_charge_timer > 0:
+            self.phase_attack_charge_timer -= 1
+            return []
+
+        if self.phase_attack_salvos_remaining > 0:
+            if self.phase_attack_salvo_timer > 0:
+                self.phase_attack_salvo_timer -= 1
+                return []
+
+            projectiles = self._create_phase_portal_salvo()
+            self.phase_attack_salvos_remaining -= 1
+            self.phase_attack_salvo_timer = max(
+                18,
+                int(36 / self.stage_attack_rate),
+            )
+            if self.phase_attack_salvos_remaining == 0:
+                self.phase_attack_linger_timer = 36
+            return projectiles
+
+        self.phase_attack_linger_timer -= 1
+        if self.phase_attack_linger_timer <= 0:
+            self.phase_attack_active = False
+            self.phase_attack_timer = 0
+            self.phase_exit_portals = []
+        return []
+
+    def _create_phase_portal_salvo(self):
+        projectiles = []
+        fired_salvo_index = (
+            self.phase_attack_total_salvos
+            - self.phase_attack_salvos_remaining
+        )
+        alternating_offset = (
+            -0.045 if fired_salvo_index % 2 == 0 else 0.045
+        )
+        angle_offsets = (
+            (-0.16, 0, 0.16)
+            if len(self.phase_exit_portals) == 1
+            else (-0.12, 0.12)
+        )
+
+        for portal in self.phase_exit_portals:
+            for angle_offset in angle_offsets:
+                projectiles.append(
+                    BossProjectile(
+                        portal["x"],
+                        portal["y"],
+                        portal["angle"]
+                        + alternating_offset
+                        + angle_offset,
+                        4.7 * self.stage_projectile_speed,
+                        "phase",
+                    )
+                )
+
+        return projectiles
+
+    def _cancel_phase_portal_attack(self):
+        self.phase_attack_active = False
+        self.phase_attack_timer = 0
+        self.phase_attack_charge_timer = 0
+        self.phase_attack_salvos_remaining = 0
+        self.phase_attack_salvo_timer = 0
+        self.phase_attack_linger_timer = 0
+        self.phase_exit_portals = []
+
     # Creeaza 1, 2 sau 3 raze in functie de faza curenta a bossului.
     # Prima raza urmareste pozitia jucatorului in momentul avertizarii.
     # Celelalte sunt distribuite uniform, pastrand culoare de evitare.
@@ -993,11 +1192,11 @@ class Boss:
         if self.hp <= 0:
             return "destroyed"
 
-        if self.phase == 1 and self.hp <= 800:
+        if self.phase == 1 and self.hp <= self.phase_two_threshold:
             self._start_phase_two()
             return "phase_changed"
 
-        if self.phase == 2 and self.hp <= 400:
+        if self.phase == 2 and self.hp <= self.phase_three_threshold:
             self._start_phase_three()
             return "phase_changed"
 
@@ -1016,6 +1215,7 @@ class Boss:
         self.primary_attack_timer = 0
         self.special_attack_timer = 0
         self.laser_attack_timer = 0
+        self._cancel_phase_portal_attack()
 
     # Expune nucleul si accelereaza toate sistemele de atac.
     def _start_phase_three(self):
@@ -1027,6 +1227,7 @@ class Boss:
         self.special_attack_timer = 0
         self.laser_attack_timer = 0
         self.lasers.clear()
+        self._cancel_phase_portal_attack()
 
     def generators_are_active(self):
         return any(generator_hp > 0 for generator_hp in self.generator_hp)
@@ -1038,6 +1239,7 @@ class Boss:
         self.state = "dying"
         self.death_timer = 240
         self.lasers.clear()
+        self._cancel_phase_portal_attack()
         self.pending_explosions.extend(
             [
                 (self.rect.centerx - 120, self.rect.centery),
@@ -1115,6 +1317,147 @@ class Boss:
     def draw_lasers(self, screen):
         for laser in self.lasers:
             laser.draw(screen)
+        self._draw_phase_portals(screen)
+
+    # Ieșirile și vectorii apar sub proiectile, ca avertizarea să rămână clară.
+    def _draw_phase_portals(self, screen):
+        if not self.phase_attack_active:
+            return
+
+        overlay = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        pulse = (math.sin(self.animation_timer * 0.18) + 1.0) / 2.0
+        warning_is_active = self.phase_attack_charge_timer > 0
+        warning_progress = 1.0 - (
+            self.phase_attack_charge_timer
+            / max(1, self.phase_attack_charge_duration)
+        )
+
+        for portal_index, portal in enumerate(self.phase_exit_portals):
+            center = (int(portal["x"]), int(portal["y"]))
+            radius = int(46 + pulse * 7)
+            pygame.draw.circle(
+                overlay,
+                (8, 2, 24, 215),
+                center,
+                radius - 8,
+            )
+            rotation = (
+                self.animation_timer * 0.15
+                * (-1 if portal_index % 2 else 1)
+            )
+            for segment_index in range(6):
+                start_angle = rotation + segment_index * math.tau / 6
+                arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+                arc_rect.center = center
+                pygame.draw.arc(
+                    overlay,
+                    (255, 45, 205, 235),
+                    arc_rect,
+                    start_angle,
+                    start_angle + 0.48,
+                    5,
+                )
+            pygame.draw.circle(
+                overlay,
+                (55, 235, 225, 220),
+                center,
+                radius - 17,
+                3,
+            )
+
+            if warning_is_active:
+                beam_length = max(
+                    self.screen_width,
+                    self.screen_height,
+                ) * 2
+                beam_end = (
+                    int(
+                        portal["x"]
+                        + math.cos(portal["angle"]) * beam_length
+                    ),
+                    int(
+                        portal["y"]
+                        + math.sin(portal["angle"]) * beam_length
+                    ),
+                )
+                beam_alpha = int(65 + warning_progress * 145)
+                pygame.draw.line(
+                    overlay,
+                    (255, 45, 205, beam_alpha),
+                    center,
+                    beam_end,
+                    4,
+                )
+                pygame.draw.line(
+                    overlay,
+                    (95, 245, 235, min(235, beam_alpha + 25)),
+                    center,
+                    beam_end,
+                    1,
+                )
+
+        if warning_is_active:
+            target = self.phase_locked_target
+            marker_radius = int(19 + pulse * 5)
+            pygame.draw.circle(
+                overlay,
+                (255, 55, 210, 185),
+                target,
+                marker_radius,
+                2,
+            )
+            pygame.draw.line(
+                overlay,
+                (75, 235, 225, 190),
+                (target[0] - marker_radius - 7, target[1]),
+                (target[0] + marker_radius + 7, target[1]),
+                2,
+            )
+            pygame.draw.line(
+                overlay,
+                (75, 235, 225, 190),
+                (target[0], target[1] - marker_radius - 7),
+                (target[0], target[1] + marker_radius + 7),
+                2,
+            )
+
+        screen.blit(overlay, (0, 0))
+
+        if warning_is_active:
+            label = self.phase_font.render(
+                "PHASE RIFT  //  VECTOR LOCKED",
+                True,
+                (105, 245, 230),
+            )
+            label_panel = pygame.Surface(
+                (label.get_width() + 30, label.get_height() + 14),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                label_panel,
+                (8, 4, 24, 205),
+                label_panel.get_rect(),
+                border_radius=8,
+            )
+            pygame.draw.rect(
+                label_panel,
+                (255, 55, 205, 175),
+                label_panel.get_rect(),
+                2,
+                border_radius=8,
+            )
+            label_panel.blit(label, (15, 7))
+            screen.blit(
+                label_panel,
+                (
+                    self.screen_width // 2
+                    - label_panel.get_width() // 2,
+                    390,
+                ),
+            )
 
     # Deseneaza particulele, bossul, scuturile si interfata luptei.
     def draw(self, screen):
@@ -1151,6 +1494,9 @@ class Boss:
             )
         screen.blit(display_image, (draw_x, draw_y))
 
+        if self.difficulty_stage >= 2:
+            self._draw_phase_sovereign_energy(screen)
+
         self._draw_core(screen)
         self._draw_generators(screen)
         if self.transition_timer > 0:
@@ -1163,6 +1509,84 @@ class Boss:
             self._draw_intro_warning(screen)
         elif self.phase_banner_timer > 0:
             self._draw_phase_banner(screen)
+
+    # Stage 2+ adaugă fisuri cyan și un inel dimensional peste corpul original.
+    def _draw_phase_sovereign_energy(self, screen):
+        overlay = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        pulse = (math.sin(self.animation_timer * 0.12) + 1.0) / 2.0
+        core = self.core_center
+        aura_radius = int(58 + pulse * 9)
+        pygame.draw.circle(
+            overlay,
+            (55, 235, 225, int(38 + pulse * 28)),
+            core,
+            aura_radius,
+        )
+        pygame.draw.circle(
+            overlay,
+            (255, 45, 205, int(120 + pulse * 70)),
+            core,
+            aura_radius,
+            3,
+        )
+
+        rotation = self.animation_timer * 0.035
+        for crack_index in range(8):
+            angle = rotation + crack_index * math.tau / 8
+            start_radius = 64
+            end_radius = 92 + (crack_index % 3) * 14
+            midpoint_angle = angle + (0.08 if crack_index % 2 else -0.08)
+            start = (
+                int(core[0] + math.cos(angle) * start_radius),
+                int(core[1] + math.sin(angle) * start_radius),
+            )
+            midpoint = (
+                int(core[0] + math.cos(midpoint_angle) * 78),
+                int(core[1] + math.sin(midpoint_angle) * 78),
+            )
+            end = (
+                int(core[0] + math.cos(angle) * end_radius),
+                int(core[1] + math.sin(angle) * end_radius),
+            )
+            crack_color = (
+                (55, 235, 225, int(70 + pulse * 55))
+                if crack_index % 2 == 0
+                else (255, 45, 205, int(65 + pulse * 50))
+            )
+            pygame.draw.lines(
+                overlay,
+                crack_color,
+                False,
+                [start, midpoint, end],
+                2,
+            )
+
+        if self.phase_attack_active:
+            portal_radius = int(42 + pulse * 8)
+            for segment_index in range(6):
+                start_angle = (
+                    -self.animation_timer * 0.16
+                    + segment_index * math.tau / 6
+                )
+                arc_rect = pygame.Rect(
+                    core[0] - portal_radius,
+                    core[1] - portal_radius,
+                    portal_radius * 2,
+                    portal_radius * 2,
+                )
+                pygame.draw.arc(
+                    overlay,
+                    (105, 245, 235, 235),
+                    arc_rect,
+                    start_angle,
+                    start_angle + 0.48,
+                    4,
+                )
+
+        screen.blit(overlay, (0, 0))
 
     # Schimbarea fazei produce o undă vizibilă fără să schimbe gameplay-ul.
     def _draw_phase_transition_energy(self, screen):
@@ -1452,8 +1876,13 @@ class Boss:
         )
         screen.blit(panel, (bar_x - 16, 17))
 
+        sovereign_name = (
+            "THE DEAD STAR SOVEREIGN"
+            if self.difficulty_stage == 1
+            else "THE PHASE SOVEREIGN"
+        )
         title = self.title_font.render(
-            f"THE DEAD STAR SOVEREIGN  //  PHASE {self.phase}",
+            f"{sovereign_name}  //  PHASE {self.phase}",
             True,
             (245, 225, 238),
         )

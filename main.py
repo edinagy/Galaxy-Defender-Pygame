@@ -3591,7 +3591,10 @@ class GalaxyDefender:
             ),
             (
                 "COMBAT LINK",
-                f"X{self.gameplay.multiplier}",
+                (
+                    f"C{self.gameplay.combo}"
+                    f"  //  X{self.gameplay.multiplier}"
+                ),
                 (255, 190, 85),
             ),
         )
