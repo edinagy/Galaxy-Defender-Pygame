@@ -8,10 +8,11 @@ import pygame
 # tip de inamic să aibă propria culoare, intensitate și durată.
 class Explosion:
 
-    def __init__(self, x, y, effect_type="default"):
+    def __init__(self, x, y, effect_type="default", scale=1.0):
         self.x = float(x)
         self.y = float(y)
         self.effect_type = effect_type
+        self.scale = max(0.55, min(2.4, float(scale)))
         self.age = 0
         self.finished = False
         self.particles = []
@@ -28,6 +29,22 @@ class Explosion:
             self._create_fighter_explosion()
         elif self.effect_type == "tank":
             self._create_tank_explosion()
+        elif self.effect_type == "asteroid":
+            self._create_asteroid_explosion()
+        elif self.effect_type == "missile":
+            self._create_missile_explosion()
+        elif self.effect_type == "drone":
+            self._create_drone_explosion()
+        elif self.effect_type == "crossfire":
+            self._create_crossfire_explosion()
+        elif self.effect_type == "ally":
+            self._create_ally_explosion()
+        elif self.effect_type == "elite":
+            self._create_elite_explosion()
+        elif self.effect_type == "boss":
+            self._create_boss_explosion()
+        elif self.effect_type == "singularity":
+            self._create_singularity_explosion()
         else:
             self._create_default_explosion()
 
@@ -116,6 +133,226 @@ class Explosion:
             },
         ]
 
+    # Asteroid: rocă incandescentă, praf și fragmente grele neregulate.
+    def _create_asteroid_explosion(self):
+        colors = [
+            (255, 235, 195),
+            (235, 155, 75),
+            (155, 92, 55),
+            (85, 72, 70),
+        ]
+        self._add_flash(self.x, self.y, (245, 165, 85), 34, 9)
+        self._add_shockwave(
+            self.x, self.y, (185, 125, 85),
+            8, 3.0, 26, 4,
+        )
+        self._add_particles(
+            self.x, self.y, 44, colors,
+            (1.4, 6.2), (3, 9), (28, 52),
+            drag=0.968, gravity=0.045,
+        )
+        self._add_fragments(
+            self.x, self.y, 20, (105, 82, 72),
+            (2.0, 7.2), (36, 64),
+        )
+
+    # Rachetă: detonare compactă, albă în centru și cu șrapnel roșu.
+    def _create_missile_explosion(self):
+        colors = [
+            (255, 255, 245),
+            (255, 220, 95),
+            (255, 105, 35),
+            (210, 35, 30),
+        ]
+        self._add_flash(self.x, self.y, (255, 175, 55), 43, 10)
+        self._add_shockwave(
+            self.x, self.y, (255, 115, 45),
+            7, 4.5, 23, 4,
+        )
+        self._add_shockwave(
+            self.x, self.y, (255, 215, 145),
+            4, 2.7, 17, 2,
+        )
+        self._add_particles(
+            self.x, self.y, 52, colors,
+            (3.0, 9.0), (2, 7), (20, 40),
+            drag=0.948, gravity=0.025,
+        )
+        self._add_fragments(
+            self.x, self.y, 13, (175, 42, 35),
+            (4.0, 9.5), (24, 45),
+        )
+
+    # Dronă: descărcare electrică albastră și resturi tehnologice mici.
+    def _create_drone_explosion(self):
+        colors = [
+            (245, 255, 255),
+            (85, 225, 255),
+            (40, 145, 255),
+            (55, 75, 205),
+        ]
+        self._add_flash(self.x, self.y, (65, 190, 255), 36, 9)
+        self._add_shockwave(
+            self.x, self.y, (75, 205, 255),
+            6, 3.7, 24, 3,
+        )
+        self._add_particles(
+            self.x, self.y, 46, colors,
+            (2.7, 7.5), (2, 6), (24, 45),
+            drag=0.957,
+        )
+        self._add_fragments(
+            self.x, self.y, 10, (55, 105, 195),
+            (3.2, 7.7), (29, 48),
+        )
+
+    # Crossfire: energia magenta se prăbușește și reapare în două impulsuri.
+    def _create_crossfire_explosion(self):
+        colors = [
+            (255, 245, 255),
+            (255, 105, 215),
+            (195, 45, 255),
+            (95, 25, 175),
+        ]
+        self._add_flash(self.x, self.y, (245, 55, 190), 48, 11)
+        self._add_shockwave(
+            self.x, self.y, (245, 70, 215),
+            8, 4.0, 30, 4,
+        )
+        self._add_shockwave(
+            self.x, self.y, (135, 65, 255),
+            5, 2.45, 38, 2,
+        )
+        self._add_particles(
+            self.x, self.y, 58, colors,
+            (2.2, 7.6), (3, 8), (30, 54),
+            drag=0.963,
+        )
+        self._add_fragments(
+            self.x, self.y, 16, (115, 40, 165),
+            (2.8, 7.0), (34, 56),
+        )
+        self.secondary_bursts = [
+            {
+                "delay": 8,
+                "x": self.x - 24,
+                "y": self.y + 8,
+                "colors": colors,
+                "flash_color": (255, 65, 205),
+                "shockwave_color": (175, 65, 255),
+                "particle_count": 18,
+            },
+            {
+                "delay": 15,
+                "x": self.x + 28,
+                "y": self.y - 12,
+                "colors": colors,
+                "flash_color": (185, 70, 255),
+                "shockwave_color": (235, 75, 220),
+                "particle_count": 16,
+            },
+        ]
+
+    # Aliat: reactorul cyan se descarcă în inele albe și fragmente albastre.
+    def _create_ally_explosion(self):
+        colors = [
+            (255, 255, 255),
+            (145, 245, 255),
+            (45, 185, 255),
+            (45, 85, 210),
+        ]
+        self._add_flash(self.x, self.y, (80, 220, 255), 51, 12)
+        self._add_shockwave(
+            self.x, self.y, (115, 235, 255),
+            9, 4.1, 32, 4,
+        )
+        self._add_shockwave(
+            self.x, self.y, (85, 115, 255),
+            5, 2.6, 42, 2,
+        )
+        self._add_particles(
+            self.x, self.y, 62, colors,
+            (2.0, 7.2), (3, 8), (32, 58),
+            drag=0.965, gravity=0.012,
+        )
+        self._add_fragments(
+            self.x, self.y, 18, (55, 115, 195),
+            (2.8, 7.0), (38, 62),
+        )
+
+    # Elită: explozie violet amplă, pentru formația rară cu viață mare.
+    def _create_elite_explosion(self):
+        colors = [
+            (255, 250, 255),
+            (225, 145, 255),
+            (165, 55, 245),
+            (75, 20, 145),
+        ]
+        self._add_flash(self.x, self.y, (205, 75, 255), 56, 13)
+        self._add_shockwave(
+            self.x, self.y, (205, 85, 255),
+            10, 4.3, 34, 5,
+        )
+        self._add_particles(
+            self.x, self.y, 72, colors,
+            (2.4, 8.3), (3, 9), (34, 64),
+            drag=0.966,
+        )
+        self._add_fragments(
+            self.x, self.y, 20, (105, 40, 165),
+            (3.0, 8.0), (38, 65),
+        )
+
+    # Boss: detonare roșie stratificată, folosită în secvența finală.
+    def _create_boss_explosion(self):
+        colors = [
+            (255, 255, 250),
+            (255, 175, 205),
+            (255, 55, 115),
+            (125, 15, 75),
+        ]
+        self._add_flash(self.x, self.y, (255, 45, 105), 66, 14)
+        self._add_shockwave(
+            self.x, self.y, (255, 55, 115),
+            12, 5.0, 38, 6,
+        )
+        self._add_shockwave(
+            self.x, self.y, (255, 175, 205),
+            5, 3.1, 46, 3,
+        )
+        self._add_particles(
+            self.x, self.y, 78, colors,
+            (2.5, 9.0), (3, 10), (38, 72),
+            drag=0.967, gravity=0.012,
+        )
+        self._add_fragments(
+            self.x, self.y, 24, (95, 25, 65),
+            (3.2, 8.8), (42, 76),
+        )
+
+    # Black Hole: implozie violet-albastră pentru obiectele absorbite.
+    def _create_singularity_explosion(self):
+        colors = [
+            (245, 235, 255),
+            (170, 105, 255),
+            (75, 75, 225),
+            (25, 20, 90),
+        ]
+        self._add_flash(self.x, self.y, (105, 75, 235), 38, 10)
+        self._add_shockwave(
+            self.x, self.y, (125, 85, 255),
+            24, -0.62, 30, 4,
+        )
+        self._add_shockwave(
+            self.x, self.y, (65, 115, 255),
+            7, 2.1, 24, 2,
+        )
+        self._add_particles(
+            self.x, self.y, 38, colors,
+            (1.2, 5.5), (2, 6), (22, 42),
+            drag=0.91,
+        )
+
     # Explozia implicită rămâne pentru asteroizi, rachete și aliați.
     def _create_default_explosion(self):
         colors = [
@@ -144,9 +381,20 @@ class Explosion:
         drag,
         gravity=0.0,
     ):
-        for _ in range(count):
+        scaled_count = max(
+            1,
+            int(count * (0.72 + self.scale * 0.28)),
+        )
+        speed_scale = self.scale ** 0.68
+        minimum_size = max(1, int(size_range[0] * self.scale))
+        maximum_size = max(
+            minimum_size,
+            int(size_range[1] * self.scale),
+        )
+
+        for _ in range(scaled_count):
             angle = random.uniform(0.0, math.tau)
-            speed = random.uniform(*speed_range)
+            speed = random.uniform(*speed_range) * speed_scale
             life = random.randint(*life_range)
             self.particles.append(
                 {
@@ -155,8 +403,8 @@ class Explosion:
                     "dx": math.cos(angle) * speed,
                     "dy": math.sin(angle) * speed,
                     "drag": drag,
-                    "gravity": gravity,
-                    "size": random.randint(*size_range),
+                    "gravity": gravity * self.scale,
+                    "size": random.randint(minimum_size, maximum_size),
                     "life": life,
                     "maximum_life": life,
                     "color": random.choice(colors),
@@ -174,9 +422,17 @@ class Explosion:
         speed_range,
         life_range,
     ):
-        for _ in range(count):
+        scaled_count = max(
+            1,
+            int(count * (0.72 + self.scale * 0.28)),
+        )
+        speed_scale = self.scale ** 0.68
+        minimum_size = max(2, int(3 * self.scale))
+        maximum_size = max(minimum_size, int(6 * self.scale))
+
+        for _ in range(scaled_count):
             angle = random.uniform(0.0, math.tau)
-            speed = random.uniform(*speed_range)
+            speed = random.uniform(*speed_range) * speed_scale
             life = random.randint(*life_range)
             self.particles.append(
                 {
@@ -185,8 +441,8 @@ class Explosion:
                     "dx": math.cos(angle) * speed,
                     "dy": math.sin(angle) * speed,
                     "drag": 0.975,
-                    "gravity": 0.035,
-                    "size": random.randint(3, 6),
+                    "gravity": 0.035 * self.scale,
+                    "size": random.randint(minimum_size, maximum_size),
                     "life": life,
                     "maximum_life": life,
                     "color": color,
@@ -200,7 +456,7 @@ class Explosion:
                 "x": float(x),
                 "y": float(y),
                 "color": color,
-                "radius": radius,
+                "radius": max(2, int(radius * self.scale)),
                 "life": life,
                 "maximum_life": life,
             }
@@ -221,26 +477,35 @@ class Explosion:
                 "x": float(x),
                 "y": float(y),
                 "color": color,
-                "radius": float(radius),
-                "speed": speed,
+                "radius": float(radius * self.scale),
+                "speed": speed * self.scale,
                 "life": life,
                 "maximum_life": life,
-                "width": width,
+                "width": max(1, int(width * self.scale)),
             }
         )
 
-    # Pornește una dintre detonările secundare ale tank-ului.
+    # Pornește detonările secundare configurate de tank sau Crossfire.
     def _activate_secondary_burst(self, burst):
+        flash_color = burst.get(
+            "flash_color",
+            (135, 255, 95),
+        )
+        shockwave_color = burst.get(
+            "shockwave_color",
+            (80, 235, 75),
+        )
+        particle_count = burst.get("particle_count", 23)
         self._add_flash(
             burst["x"], burst["y"],
-            (135, 255, 95), 31, 8,
+            flash_color, 31, 8,
         )
         self._add_shockwave(
-            burst["x"], burst["y"], (80, 235, 75),
+            burst["x"], burst["y"], shockwave_color,
             6, 2.7, 22, 3,
         )
         self._add_particles(
-            burst["x"], burst["y"], 23, burst["colors"],
+            burst["x"], burst["y"], particle_count, burst["colors"],
             (1.7, 5.2), (3, 8), (25, 45),
             drag=0.968, gravity=0.02,
         )
@@ -308,6 +573,8 @@ class Explosion:
                 shockwave["width"],
             )
 
+        self._draw_effect_signature(screen)
+
         for particle in self.particles:
             fade = particle["life"] / particle["maximum_life"]
             color = self._fade_color(
@@ -320,7 +587,44 @@ class Explosion:
                 int(particle["y"] - particle["dy"] * 2.7),
             )
 
-            if particle["fragment"]:
+            if particle["fragment"] and self.effect_type == "asteroid":
+                # Bucățile de asteroid rămân corpuri neregulate, nu lasere.
+                velocity_length = max(
+                    0.001,
+                    math.hypot(particle["dx"], particle["dy"]),
+                )
+                direction_x = particle["dx"] / velocity_length
+                direction_y = particle["dy"] / velocity_length
+                perpendicular_x = -direction_y
+                perpendicular_y = direction_x
+                chunk_length = max(3, int(particle["size"] * fade * 1.8))
+                chunk_width = max(2, int(particle["size"] * fade))
+                chunk_points = [
+                    (
+                        int(position[0] + direction_x * chunk_length),
+                        int(position[1] + direction_y * chunk_length),
+                    ),
+                    (
+                        int(position[0] + perpendicular_x * chunk_width),
+                        int(position[1] + perpendicular_y * chunk_width),
+                    ),
+                    (
+                        int(position[0] - direction_x * chunk_length * 0.75),
+                        int(position[1] - direction_y * chunk_length * 0.75),
+                    ),
+                    (
+                        int(position[0] - perpendicular_x * chunk_width),
+                        int(position[1] - perpendicular_y * chunk_width),
+                    ),
+                ]
+                pygame.draw.polygon(
+                    screen,
+                    self._fade_color((45, 35, 35), fade),
+                    chunk_points,
+                )
+                pygame.draw.polygon(screen, color, chunk_points, 2)
+
+            elif particle["fragment"]:
                 pygame.draw.line(
                     screen,
                     self._fade_color(color, 0.28),
@@ -383,6 +687,126 @@ class Explosion:
                 (255, 255, 245),
                 position,
                 max(2, int(radius * 0.38)),
+            )
+
+    # Fiecare familie primește o formă recognoscibilă, pe lângă paletă.
+    def _draw_effect_signature(self, screen):
+        position = (int(self.x), int(self.y))
+        signature_duration = 62 if self.effect_type == "boss" else 44
+        fade = max(0.0, 1.0 - self.age / signature_duration)
+        if fade <= 0:
+            return
+
+        if self.effect_type == "missile":
+            # Racheta produce o stea de șoc ascuțită.
+            ray_length = int((28 + self.age * 5.2) * self.scale)
+            for ray_index in range(8):
+                angle = ray_index * math.tau / 8 + 0.16
+                ray_end = (
+                    int(self.x + math.cos(angle) * ray_length),
+                    int(self.y + math.sin(angle) * ray_length),
+                )
+                pygame.draw.line(
+                    screen,
+                    self._fade_color((255, 165, 65), fade),
+                    position,
+                    ray_end,
+                    max(1, int(3 * fade * self.scale)),
+                )
+
+        elif self.effect_type in ("drone", "ally"):
+            # Arcurile electrice au câte o ruptură la mijloc.
+            base_color = (
+                (55, 175, 255)
+                if self.effect_type == "drone"
+                else (115, 235, 255)
+            )
+            inner_radius = int((12 + self.age * 1.1) * self.scale)
+            outer_radius = int((29 + self.age * 2.7) * self.scale)
+            for arc_index in range(6):
+                angle = (
+                    arc_index * math.tau / 6
+                    + self.age * 0.045 * (-1 if arc_index % 2 else 1)
+                )
+                start = (
+                    int(self.x + math.cos(angle) * inner_radius),
+                    int(self.y + math.sin(angle) * inner_radius),
+                )
+                midpoint = (
+                    int(
+                        self.x
+                        + math.cos(angle + 0.11) * (inner_radius + outer_radius) / 2
+                    ),
+                    int(
+                        self.y
+                        + math.sin(angle + 0.11) * (inner_radius + outer_radius) / 2
+                    ),
+                )
+                end = (
+                    int(self.x + math.cos(angle) * outer_radius),
+                    int(self.y + math.sin(angle) * outer_radius),
+                )
+                pygame.draw.lines(
+                    screen,
+                    self._fade_color(base_color, fade),
+                    False,
+                    [start, midpoint, end],
+                    max(1, int(3 * fade)),
+                )
+
+        elif self.effect_type in ("crossfire", "elite"):
+            # Segmentele violete se rotesc în sensuri opuse.
+            base_color = (
+                (255, 75, 205)
+                if self.effect_type == "crossfire"
+                else (190, 80, 255)
+            )
+            radius = max(3, int((18 + self.age * 3.4) * self.scale))
+            arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+            arc_rect.center = position
+            rotation = self.age * 0.12
+            for segment_index in range(4):
+                start_angle = rotation + segment_index * math.pi / 2
+                pygame.draw.arc(
+                    screen,
+                    self._fade_color(base_color, fade),
+                    arc_rect,
+                    start_angle,
+                    start_angle + 0.58,
+                    max(1, int(4 * fade)),
+                )
+
+        elif self.effect_type == "boss":
+            # Detonarea nucleului trimite raze lungi prin corpul fortăreței.
+            ray_length = int((35 + self.age * 5.0) * self.scale)
+            for ray_index in range(12):
+                angle = ray_index * math.tau / 12 + self.age * 0.012
+                ray_start = (
+                    int(self.x + math.cos(angle) * 10),
+                    int(self.y + math.sin(angle) * 10),
+                )
+                ray_end = (
+                    int(self.x + math.cos(angle) * ray_length),
+                    int(self.y + math.sin(angle) * ray_length),
+                )
+                pygame.draw.line(
+                    screen,
+                    self._fade_color((255, 55, 115), fade),
+                    ray_start,
+                    ray_end,
+                    max(1, int(4 * fade)),
+                )
+
+        elif self.effect_type == "singularity":
+            # Centrul negru și inelele contractate sugerează o implozie.
+            core_radius = max(3, int((24 - self.age * 0.7) * self.scale))
+            pygame.draw.circle(screen, (2, 2, 12), position, core_radius)
+            pygame.draw.circle(
+                screen,
+                self._fade_color((145, 95, 255), fade),
+                position,
+                core_radius + max(2, int(7 * fade)),
+                max(1, int(3 * fade)),
             )
 
     # Construiește un halou luminos din mai multe straturi aditive.

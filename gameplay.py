@@ -969,6 +969,8 @@ class Gameplay:
                     Explosion(
                         enemy.rect.centerx,
                         enemy.rect.centery,
+                        "singularity",
+                        scale=0.82,
                     )
                 )
                 self.enemies.remove(enemy)
@@ -1363,6 +1365,12 @@ class Gameplay:
             Explosion(
                 missile.rect.centerx,
                 missile.rect.centery,
+                "missile",
+                scale=(
+                    1.25
+                    if getattr(missile, "missile_type", "") == "heavy"
+                    else 0.92
+                ),
             )
         )
 
@@ -1891,6 +1899,12 @@ class Gameplay:
                 Explosion(
                     explosion_position[0],
                     explosion_position[1],
+                    "boss",
+                    scale=(
+                        1.0
+                        if self.boss.state == "defeated"
+                        else 0.72
+                    ),
                 )
             )
             # Sunetul nu este pornit pentru fiecare explozie simultana.
@@ -2193,6 +2207,8 @@ class Gameplay:
             Explosion(
                 turret.rect.centerx,
                 turret.rect.centery,
+                "crossfire",
+                scale=1.18,
             )
         )
         self.explosion_sound.play()
@@ -2277,6 +2293,11 @@ class Gameplay:
             Explosion(
                 asteroid.rect.centerx,
                 asteroid.rect.centery,
+                "asteroid",
+                scale=max(
+                    0.72,
+                    min(1.55, asteroid.radius / 26),
+                ),
             )
         )
 
@@ -2314,6 +2335,11 @@ class Gameplay:
                 Explosion(
                     asteroid.rect.centerx,
                     asteroid.rect.centery,
+                    "asteroid",
+                    scale=max(
+                        0.72,
+                        min(1.55, asteroid.radius / 26),
+                    ),
                 )
             )
 
@@ -2362,6 +2388,8 @@ class Gameplay:
             Explosion(
                 drone.rect.centerx,
                 drone.rect.centery,
+                "drone",
+                scale=0.95,
             )
         )
         self.explosion_sound.play()
@@ -2458,6 +2486,12 @@ class Gameplay:
                     Explosion(
                         enemy_center_x + offset_x,
                         enemy_center_y + offset_y,
+                        "elite",
+                        scale=(
+                            1.25
+                            if (offset_x, offset_y) == (0, 0)
+                            else 0.72
+                        ),
                     )
                 )
 
@@ -2681,6 +2715,8 @@ class Gameplay:
                         Explosion(
                             allied_ship.rect.centerx,
                             allied_ship.rect.centery,
+                            "ally",
+                            scale=1.15,
                         )
                     )
                     self.explosion_sound.play()
