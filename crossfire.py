@@ -23,6 +23,17 @@ class CrossfireBullet:
         self.speed_y = float(speed_y)
         self.color = color
         self.radius = radius
+        self.age = 0
+        self.trail_points = []
+        self.origin = (int(start_x), int(start_y))
+
+        # Culoarea existentă identifică faza atacului fără parametri noi.
+        if color[0] >= 245 and color[1] < 95:
+            self.visual_style = "precision"
+        elif color[0] >= 240 and color[1] >= 95:
+            self.visual_style = "pincer"
+        else:
+            self.visual_style = "arc"
         self.rect = pygame.Rect(
             int(self.x - radius),
             int(self.y - radius),
@@ -32,6 +43,11 @@ class CrossfireBullet:
 
     # Deplasează proiectilul și actualizează hitbox-ul.
     def move(self):
+        self.age += 1
+        self.trail_points.append(self.rect.center)
+        if len(self.trail_points) > 9:
+            self.trail_points.pop(0)
+
         self.x += self.speed_x
         self.y += self.speed_y
         self.rect.center = (
@@ -49,30 +65,103 @@ class CrossfireBullet:
             or self.y > screen_height + margin
         )
 
-    # Desenează proiectilul cu glow și miez luminos.
+    def _direction_axes(self):
+        length = max(0.001, math.hypot(self.speed_x, self.speed_y))
+        direction = (self.speed_x / length, self.speed_y / length)
+        perpendicular = (-direction[1], direction[0])
+        return direction, perpendicular
+
+    @staticmethod
+    def _point(center, direction, perpendicular, forward, side=0):
+        return (
+            int(center[0] + direction[0] * forward + perpendicular[0] * side),
+            int(center[1] + direction[1] * forward + perpendicular[1] * side),
+        )
+
+    # Dara păstrează atacurile lizibile când mai multe turele trag simultan.
+    def _draw_trail(self, screen, maximum_width):
+        if len(self.trail_points) < 2:
+            return
+
+        point_count = len(self.trail_points)
+        for index in range(1, point_count):
+            progress = index / point_count
+            trail_color = tuple(
+                max(3, int(channel * progress * 0.46))
+                for channel in self.color
+            )
+            pygame.draw.line(
+                screen,
+                trail_color,
+                self.trail_points[index - 1],
+                self.trail_points[index],
+                max(1, int(maximum_width * progress)),
+            )
+
+    # Desenează un flash scurt exact în punctul din care a plecat salva.
+    def _draw_launch_flash(self, screen):
+        if self.age >= 7:
+            return
+
+        progress = self.age / 7
+        radius = int(5 + progress * 17)
+        flash_color = tuple(max(80, channel) for channel in self.color)
+        pygame.draw.circle(screen, flash_color, self.origin, radius, 2)
+        pygame.draw.circle(
+            screen,
+            (255, 240, 250),
+            self.origin,
+            max(1, int(4 * (1.0 - progress))),
+        )
+
+    # Desenează o semnătură diferită pentru fiecare fază Crossfire.
     def draw(self, screen):
-        pygame.draw.circle(
-            screen,
-            (
-                max(0, self.color[0] // 3),
-                max(0, self.color[1] // 3),
-                max(0, self.color[2] // 3),
-            ),
-            self.rect.center,
-            self.radius + 6,
-        )
-        pygame.draw.circle(
-            screen,
-            self.color,
-            self.rect.center,
-            self.radius,
-        )
-        pygame.draw.circle(
-            screen,
-            (255, 245, 255),
-            self.rect.center,
-            max(2, self.radius // 2),
-        )
+        center = self.rect.center
+        direction, perpendicular = self._direction_axes()
+        self._draw_launch_flash(screen)
+
+        if self.visual_style == "precision":
+            self._draw_trail(screen, 5)
+            tip = self._point(center, direction, perpendicular, 13)
+            tail = self._point(center, direction, perpendicular, -10)
+            left = self._point(center, direction, perpendicular, -2, 7)
+            right = self._point(center, direction, perpendicular, -2, -7)
+            pygame.draw.line(screen, (65, 3, 42), tail, tip, 12)
+            pygame.draw.polygon(screen, (175, 15, 110), [tip, left, tail, right])
+            pygame.draw.line(screen, self.color, tail, tip, 5)
+            pygame.draw.line(screen, (255, 225, 245), center, tip, 2)
+
+        elif self.visual_style == "pincer":
+            self._draw_trail(screen, 6)
+            tip = self._point(center, direction, perpendicular, 12)
+            tail = self._point(center, direction, perpendicular, -9)
+            pygame.draw.line(screen, (75, 18, 3), tail, tip, 13)
+            pygame.draw.line(screen, (255, 90, 35), tail, tip, 7)
+            for side in (-1, 1):
+                node = self._point(center, direction, perpendicular, -1, side * 6)
+                pygame.draw.circle(screen, (255, 175, 75), node, 3)
+            pygame.draw.circle(screen, (255, 245, 220), tip, 3)
+
+        else:
+            self._draw_trail(screen, 7)
+            pulse = 1 + int(abs(math.sin(self.age * 0.24)) * 2)
+            tip = self._point(center, direction, perpendicular, 13)
+            tail = self._point(center, direction, perpendicular, -11)
+            left = self._point(center, direction, perpendicular, -1, 8)
+            right = self._point(center, direction, perpendicular, -1, -8)
+            pygame.draw.circle(screen, (35, 5, 65), center, 11 + pulse)
+            pygame.draw.polygon(screen, (105, 25, 170), [tip, left, tail, right])
+            pygame.draw.polygon(
+                screen,
+                self.color,
+                [
+                    tip,
+                    self._point(center, direction, perpendicular, 0, 4),
+                    tail,
+                    self._point(center, direction, perpendicular, 0, -4),
+                ],
+            )
+            pygame.draw.circle(screen, (250, 230, 255), center, 3)
 
 
 # Navă-turelă care patrulează, trage și poate fi distrusă.
@@ -108,6 +197,7 @@ class CrossfireTurret:
         self.patrol_phase = turret_index * 1.35
         self.fire_timer = 45 + turret_index * 18
         self.hit_flash_timer = 0
+        self.weapon_flash_timer = 0
         self.rect = pygame.Rect(
             int(self.x),
             int(self.y),
@@ -138,6 +228,8 @@ class CrossfireTurret:
 
         if self.hit_flash_timer > 0:
             self.hit_flash_timer -= 1
+        if self.weapon_flash_timer > 0:
+            self.weapon_flash_timer -= 1
 
         if self.state == "entering":
             self.y += (
@@ -216,6 +308,7 @@ class CrossfireTurret:
             )
             self.fire_timer = 82 + self.turret_index * 4
 
+        self.weapon_flash_timer = 9
         return bullets
 
     # Creează o rafală în evantai orientată spre jucător.
@@ -327,6 +420,7 @@ class CrossfireTurret:
                 speed=5.25,
             )
         )
+        self.weapon_flash_timer = 12
         return bullets
 
     # Pornește retragerea prin partea superioară.
@@ -387,6 +481,28 @@ class CrossfireTurret:
                 (self.rect.centerx, self.rect.bottom - 8),
                 2,
             )
+
+            # La tragere, nucleul tunului eliberează un inel scurt de energie.
+            if self.weapon_flash_timer > 0:
+                flash_progress = 1.0 - self.weapon_flash_timer / 9
+                muzzle_center = (
+                    self.rect.centerx,
+                    self.rect.bottom - 5,
+                )
+                flash_radius = int(7 + flash_progress * 22)
+                pygame.draw.circle(
+                    screen,
+                    (255, 65, 165),
+                    muzzle_center,
+                    flash_radius,
+                    3,
+                )
+                pygame.draw.circle(
+                    screen,
+                    (255, 235, 250),
+                    muzzle_center,
+                    max(2, int(7 * (1.0 - flash_progress))),
+                )
 
         health_ratio = max(
             0.0,

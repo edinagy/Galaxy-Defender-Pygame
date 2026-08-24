@@ -12,7 +12,7 @@ from crossfire import CrossfireTurret
 from enemy import Enemy
 from enemy_bullet import EnemyBullet
 from explosion import Explosion
-from hit_effect import HitEffect
+from hit_effect import HitEffect, PlayerDestructionEffect
 from homing_missile import HomingMissile
 from player import Player
 from powerups import PowerUp, PowerUpCollectEffect
@@ -201,6 +201,14 @@ class Gameplay:
         self.damage_flash_duration = 18
         self.screen_shake_timer = 0
         self.screen_shake_strength = 0
+
+        # Ultima viață pornește o secvență scurtă înainte de Game Over.
+        self.player_destroyed = False
+        self.player_death_timer = 0
+        # Cele aproximativ două secunde lasă toate etapele exploziei să se vadă.
+        self.player_death_duration = 120
+        self.player_destruction_effect = None
+        self.game_over_score_saved = False
 
         # Timerul controleaza prezentarea cinematica dintre fazele bossului.
         self.boss_phase_transition_timer = 0
@@ -557,6 +565,21 @@ class Gameplay:
         for star in self.stars:
             star.update()
 
+        # În timpul distrugerii finale, arena rămâne înghețată, dar
+        # particulele și exploziile continuă până apare raportul misiunii.
+        if self.player_death_timer > 0:
+            self.player_death_timer -= 1
+            if self.player_destruction_effect is not None:
+                self.player_destruction_effect.update()
+                if self.player_destruction_effect.age == 53:
+                    self._trigger_screen_shake(20, 28)
+                    self.explosion_sound.play()
+            self._update_effects()
+
+            if self.player_death_timer <= 0:
+                self._finish_player_destruction()
+            return
+
         if self.game_over or self.victory:
             return
 
@@ -617,10 +640,36 @@ class Gameplay:
         self._try_finish_wave()
 
         if self.lives <= 0:
-            # Salvează exact scorul total afișat jucătorului în timpul run-ului.
+            self._start_player_destruction()
+
+    # Oprește pericolele după ultima viață și pornește secvența navei.
+    def _start_player_destruction(self):
+        if self.player_destroyed:
+            return
+
+        self.player_destroyed = True
+        self.player_death_timer = self.player_death_duration
+        self.player_destruction_effect = PlayerDestructionEffect(
+            self.player.rect.centerx,
+            self.player.rect.centery,
+        )
+        self.energy_pulse_timer = 0
+        self.bullets.clear()
+        self.enemy_bullets.clear()
+        self.boss_projectiles.clear()
+        self.crossfire_bullets.clear()
+        self.homing_missiles.clear()
+        self._trigger_screen_shake(16, 30)
+        self.explosion_sound.play()
+        self.stop_boss_music()
+
+    # Salvează scorul o singură dată, apoi permite afișarea Game Over.
+    def _finish_player_destruction(self):
+        if not self.game_over_score_saved:
             self.save_score(self.score)
-            self.game_over = True
-            self.stop_boss_music()
+            self.game_over_score_saved = True
+
+        self.game_over = True
 
     # Actualizează pericolele de mediu și aplică efectul impactului.
     def _update_space_events(self):
@@ -691,9 +740,7 @@ class Gameplay:
         shake_duration=12,
     ):
         # Shield-ul absoarbe prima lovitură fără să consume o viață.
-        if self.player.shield:
-            self.player.shield = False
-            self.player.shield_timer = 0
+        if self.player.absorb_shield_hit():
             self._trigger_screen_shake(4, 7)
             return False
 
@@ -721,6 +768,7 @@ class Gameplay:
             HitEffect(
                 self.player.rect.centerx,
                 self.player.rect.centery,
+                effect_type="player_damage",
             )
         )
 
@@ -2033,6 +2081,7 @@ class Gameplay:
                     HitEffect(
                         missile.rect.centerx,
                         missile.rect.centery,
+                        weapon_level=bullet.weapon_level,
                     )
                 )
 
@@ -2127,6 +2176,7 @@ class Gameplay:
                     HitEffect(
                         bullet.rect.centerx,
                         bullet.rect.centery,
+                        weapon_level=bullet.weapon_level,
                     )
                 )
 
@@ -2210,6 +2260,7 @@ class Gameplay:
                     HitEffect(
                         bullet.rect.centerx,
                         bullet.rect.centery,
+                        weapon_level=bullet.weapon_level,
                     )
                 )
 
@@ -2294,6 +2345,7 @@ class Gameplay:
                     HitEffect(
                         drone.rect.centerx,
                         drone.rect.centery,
+                        weapon_level=bullet.weapon_level,
                     )
                 )
 
@@ -2339,6 +2391,8 @@ class Gameplay:
                     HitEffect(
                         enemy.rect.centerx,
                         enemy.rect.centery,
+                        weapon_level=2,
+                        effect_type="ally",
                     )
                 )
 
@@ -2371,6 +2425,7 @@ class Gameplay:
                         + enemy.image.get_width() // 2,
                         enemy.y
                         + enemy.image.get_height() // 2,
+                        weapon_level=bullet.weapon_level,
                     )
                 )
 
@@ -2548,6 +2603,7 @@ class Gameplay:
                 HitEffect(
                     bullet.rect.centerx,
                     bullet.rect.centery,
+                    weapon_level=bullet.weapon_level,
                 )
             )
 
@@ -2616,6 +2672,7 @@ class Gameplay:
                     HitEffect(
                         allied_ship.rect.centerx,
                         allied_ship.rect.centery,
+                        effect_type="player_damage",
                     )
                 )
 
@@ -2714,8 +2771,7 @@ class Gameplay:
                     self.score += 750
 
             elif powerup.powerup_type == "shield":
-                self.player.shield = True
-                self.player.shield_timer = 300
+                self.player.activate_shield(300)
 
             elif powerup.powerup_type == "life":
                 if self.lives < 5:
@@ -2750,7 +2806,22 @@ class Gameplay:
         if self.boss is not None:
             self.boss.draw_lasers(self.screen)
 
-        self.player.draw(self.screen)
+        # Nava clipește numai în primele cadre ale suprasarcinii, apoi
+        # este înlocuită complet de fragmentele secvenței de distrugere.
+        death_elapsed = (
+            self.player_death_duration
+            - self.player_death_timer
+        )
+        draw_player_ship = (
+            not self.player_destroyed
+            or (
+                self.player_death_timer > 0
+                and death_elapsed < 18
+                and self.player_death_timer % 4 < 2
+            )
+        )
+        if draw_player_ship:
+            self.player.draw(self.screen)
 
         for bullet in self.bullets:
             bullet.draw(self.screen)
@@ -2806,6 +2877,9 @@ class Gameplay:
         for effect in self.hit_effects:
             effect.draw(self.screen)
 
+        if self.player_destruction_effect is not None:
+            self.player_destruction_effect.draw(self.screen)
+
         for effect in self.powerup_collect_effects:
             effect.draw(self.screen)
 
@@ -2858,7 +2932,7 @@ class Gameplay:
         # Flash-ul este ultimul strat și colorează subtil tot ecranul la impact.
         self._draw_damage_flash()
 
-    # Desenează frontul circular și lumina interioară a abilității speciale.
+    # Desenează frontul segmentat, ecourile și particulele abilității.
     def _draw_energy_pulse(self):
         if self.energy_pulse_timer <= 0:
             return
@@ -2874,33 +2948,142 @@ class Gameplay:
                 * pulse_progress
             ),
         )
-        fade = max(0.0, 1.0 - pulse_progress)
+        fade = max(0.0, 1.0 - pulse_progress * 0.82)
         pulse_surface = pygame.Surface(
             (self.width, self.height),
             pygame.SRCALPHA,
         )
         pulse_center = self.player.rect.center
 
+        # Interiorul luminează discret obiectele deja traversate de undă.
         pygame.draw.circle(
             pulse_surface,
-            (35, 190, 255, int(28 * fade)),
+            (25, 135, 255, int(22 * fade)),
             pulse_center,
             pulse_radius,
         )
+
+        # Două ecouri rămân în urma frontului principal.
+        for echo_index, echo_distance in enumerate((30, 68)):
+            echo_radius = pulse_radius - echo_distance
+            if echo_radius <= 2:
+                continue
+            echo_alpha = int(
+                (95 - echo_index * 28) * fade
+            )
+            pygame.draw.circle(
+                pulse_surface,
+                (80, 115, 255, echo_alpha),
+                pulse_center,
+                echo_radius,
+                2,
+            )
+
+        # Glow-ul gros separă unda de fundal, iar miezul cyan rămâne clar.
         pygame.draw.circle(
             pulse_surface,
-            (115, 235, 255, int(220 * fade)),
+            (25, 90, 255, int(85 * fade)),
             pulse_center,
             pulse_radius,
-            7,
+            17,
         )
         pygame.draw.circle(
             pulse_surface,
-            (225, 130, 255, int(170 * fade)),
+            (105, 235, 255, int(235 * fade)),
             pulse_center,
-            max(1, pulse_radius - 10),
-            3,
+            pulse_radius,
+            6,
         )
+        pygame.draw.circle(
+            pulse_surface,
+            (235, 165, 255, int(190 * fade)),
+            pulse_center,
+            max(1, pulse_radius - 9),
+            2,
+        )
+
+        # Segmentele rotative fac unda să pară emisă de tehnologia navei.
+        arc_rect = pygame.Rect(
+            pulse_center[0] - pulse_radius,
+            pulse_center[1] - pulse_radius,
+            pulse_radius * 2,
+            pulse_radius * 2,
+        )
+        rotation = self.background_timer * 0.045
+        if pulse_radius > 12:
+            for segment_index in range(12):
+                segment_start = (
+                    rotation
+                    + segment_index * math.tau / 12
+                )
+                pygame.draw.arc(
+                    pulse_surface,
+                    (220, 250, 255, int(245 * fade)),
+                    arc_rect,
+                    segment_start,
+                    segment_start + 0.24,
+                    3,
+                )
+
+        # Raze foarte scurte și particule călătoresc odată cu frontul.
+        particle_count = 28
+        for particle_index in range(particle_count):
+            angle = (
+                particle_index * math.tau / particle_count
+                - self.background_timer * 0.025
+            )
+            radial_variation = math.sin(
+                particle_index * 2.7
+                + self.background_timer * 0.16
+            ) * 7
+            particle_radius = pulse_radius + radial_variation
+            particle_position = (
+                int(
+                    pulse_center[0]
+                    + math.cos(angle) * particle_radius
+                ),
+                int(
+                    pulse_center[1]
+                    + math.sin(angle) * particle_radius
+                ),
+            )
+            ray_inner = max(0, pulse_radius - 17)
+            ray_position = (
+                int(pulse_center[0] + math.cos(angle) * ray_inner),
+                int(pulse_center[1] + math.sin(angle) * ray_inner),
+            )
+            pygame.draw.line(
+                pulse_surface,
+                (100, 205, 255, int(125 * fade)),
+                ray_position,
+                particle_position,
+                2,
+            )
+            pygame.draw.circle(
+                pulse_surface,
+                (225, 250, 255, int(235 * fade)),
+                particle_position,
+                2 + particle_index % 3,
+            )
+
+        # La activare, un reactor luminos se deschide în jurul navei.
+        if pulse_progress < 0.28:
+            core_fade = 1.0 - pulse_progress / 0.28
+            core_radius = int(20 + pulse_progress * 145)
+            pygame.draw.circle(
+                pulse_surface,
+                (85, 210, 255, int(105 * core_fade)),
+                pulse_center,
+                core_radius,
+            )
+            pygame.draw.circle(
+                pulse_surface,
+                (245, 255, 255, int(235 * core_fade)),
+                pulse_center,
+                max(3, int(12 * core_fade)),
+            )
+
+        # Blit normal: păstrează transparența și nu acoperă arena ori gloanțele.
         self.screen.blit(pulse_surface, (0, 0))
 
     # Deplasează pentru câteva cadre imaginea arenei în direcții aleatoare.

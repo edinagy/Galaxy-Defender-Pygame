@@ -16,6 +16,8 @@ class BossProjectile:
         self.projectile_type = projectile_type
         self.age = 0
         self.trail = []
+        self.visual_rotation = random.uniform(0, math.tau)
+        self.spin_direction = random.choice((-1, 1))
 
         if projectile_type == "heavy":
             self.radius = 13
@@ -66,8 +68,16 @@ class BossProjectile:
         self.y += math.sin(self.angle) * self.speed
         self.rect.center = (int(self.x), int(self.y))
 
-        if self.age % 3 == 0:
-            self.trail.append([self.x, self.y, 14])
+        if self.age % 2 == 0:
+            trail_lifetime = {
+                "heavy": 20,
+                "seeker": 18,
+                "core": 16,
+                "plasma": 14,
+            }.get(self.projectile_type, 14)
+            self.trail.append(
+                [self.x, self.y, trail_lifetime, trail_lifetime]
+            )
 
         for trail_point in self.trail[:]:
             trail_point[2] -= 1
@@ -84,29 +94,153 @@ class BossProjectile:
             or self.y > screen_height + margin
         )
 
-    # Deseneaza dara luminoasa si miezul proiectilului.
-    def draw(self, screen):
-        for trail_x, trail_y, trail_life in self.trail:
-            life_ratio = trail_life / 14
-            trail_color = (
-                int(self.color[0] * life_ratio * 0.55),
-                int(self.color[1] * life_ratio * 0.55),
-                int(self.color[2] * life_ratio * 0.55),
+    # Returnează axele proiectilului pentru un desen orientat după traiectorie.
+    def _direction_axes(self):
+        direction = (math.cos(self.angle), math.sin(self.angle))
+        perpendicular = (-direction[1], direction[0])
+        return direction, perpendicular
+
+    @staticmethod
+    def _point(center, direction, perpendicular, forward, side=0):
+        return (
+            int(center[0] + direction[0] * forward + perpendicular[0] * side),
+            int(center[1] + direction[1] * forward + perpendicular[1] * side),
+        )
+
+    # Desenează o coadă graduală care nu modifică hitbox-ul proiectilului.
+    def _draw_trail(self, screen, trail_color, maximum_radius):
+        for trail_x, trail_y, trail_life, trail_maximum in self.trail:
+            life_ratio = trail_life / trail_maximum
+            color = tuple(
+                max(2, int(channel * life_ratio * 0.48))
+                for channel in trail_color
             )
             pygame.draw.circle(
                 screen,
-                trail_color,
+                color,
                 (int(trail_x), int(trail_y)),
-                max(1, int(self.radius * life_ratio * 0.7)),
+                max(1, int(maximum_radius * life_ratio)),
             )
 
-        pygame.draw.circle(screen, self.color, self.rect.center, self.radius)
-        pygame.draw.circle(
-            screen,
-            (255, 235, 245),
-            self.rect.center,
-            max(2, self.radius // 3),
+    # Desenează semnătura vizuală proprie fiecărui atac al bossului.
+    def draw(self, screen):
+        center = self.rect.center
+        direction, perpendicular = self._direction_axes()
+
+        if self.projectile_type == "heavy":
+            self._draw_heavy(screen, center, direction, perpendicular)
+        elif self.projectile_type == "seeker":
+            self._draw_seeker(screen, center, direction, perpendicular)
+        elif self.projectile_type == "core":
+            self._draw_core_shard(screen, center, direction, perpendicular)
+        else:
+            self._draw_plasma(screen, center, direction, perpendicular)
+
+    # Proiectil standard: bolt crimson cu vârf și aripioare energetice.
+    def _draw_plasma(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (255, 65, 85), 6)
+        tip = self._point(center, direction, perpendicular, 13)
+        tail = self._point(center, direction, perpendicular, -10)
+        left = self._point(center, direction, perpendicular, -2, 7)
+        right = self._point(center, direction, perpendicular, -2, -7)
+
+        pygame.draw.line(screen, (65, 3, 22), tail, tip, 13)
+        pygame.draw.polygon(screen, (185, 20, 55), [tip, left, tail, right])
+        pygame.draw.line(screen, (255, 75, 100), tail, tip, 6)
+        pygame.draw.line(screen, (255, 235, 240), center, tip, 2)
+        pygame.draw.circle(screen, (255, 250, 250), center, 3)
+
+    # Salva grea: torpilă încinsă, înconjurată de plăci rotative.
+    def _draw_heavy(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (255, 90, 25), 10)
+        pulse = 1 + int((math.sin(self.age * 0.22) + 1) * 1.5)
+        pygame.draw.circle(screen, (70, 12, 4), center, 17 + pulse)
+        pygame.draw.circle(screen, (185, 35, 12), center, 13 + pulse)
+        pygame.draw.circle(screen, (255, 105, 25), center, 9)
+        pygame.draw.circle(screen, (255, 238, 170), center, 4)
+
+        rotation = self.visual_rotation + self.age * 0.13 * self.spin_direction
+        for plate_index in range(4):
+            angle = rotation + plate_index * math.pi / 2
+            plate_center = (
+                int(center[0] + math.cos(angle) * 17),
+                int(center[1] + math.sin(angle) * 17),
+            )
+            tangent = (-math.sin(angle), math.cos(angle))
+            pygame.draw.line(
+                screen,
+                (255, 155, 45),
+                (
+                    int(plate_center[0] - tangent[0] * 5),
+                    int(plate_center[1] - tangent[1] * 5),
+                ),
+                (
+                    int(plate_center[0] + tangent[0] * 5),
+                    int(plate_center[1] + tangent[1] * 5),
+                ),
+                3,
+            )
+
+    # Seeker: ochi violet cu reticul rotativ și coadă curbată vizibilă.
+    def _draw_seeker(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (210, 55, 255), 7)
+        pygame.draw.circle(screen, (35, 5, 70), center, 14)
+        pygame.draw.circle(screen, (105, 20, 175), center, 11)
+
+        rotation = self.visual_rotation + self.age * 0.16 * self.spin_direction
+        orbit_rect = pygame.Rect(0, 0, 30, 30)
+        orbit_rect.center = center
+        pygame.draw.arc(
+            screen, (220, 85, 255), orbit_rect, rotation, rotation + 2.1, 2
         )
+        pygame.draw.arc(
+            screen,
+            (95, 70, 255),
+            orbit_rect,
+            rotation + math.pi,
+            rotation + math.pi + 2.1,
+            2,
+        )
+
+        pupil = self._point(center, direction, perpendicular, 4)
+        pygame.draw.circle(screen, (245, 165, 255), center, 7)
+        pygame.draw.circle(screen, (255, 250, 255), pupil, 3)
+
+        for side in (-1, 1):
+            fin_start = self._point(center, direction, perpendicular, -3, side * 8)
+            fin_end = self._point(center, direction, perpendicular, -10, side * 13)
+            pygame.draw.line(screen, (175, 65, 255), fin_start, fin_end, 3)
+
+    # Faza finală: fragment instabil din nucleul Dead Star.
+    def _draw_core_shard(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (255, 30, 130), 7)
+        tip = self._point(center, direction, perpendicular, 14)
+        tail = self._point(center, direction, perpendicular, -12)
+        left = self._point(center, direction, perpendicular, -2, 8)
+        right = self._point(center, direction, perpendicular, -2, -8)
+
+        pygame.draw.circle(screen, (65, 3, 38), center, 13)
+        pygame.draw.polygon(screen, (170, 15, 95), [tip, left, tail, right])
+        pygame.draw.polygon(
+            screen,
+            (255, 55, 145),
+            [
+                tip,
+                self._point(center, direction, perpendicular, 0, 4),
+                tail,
+                self._point(center, direction, perpendicular, 0, -4),
+            ],
+        )
+        pygame.draw.line(screen, (255, 230, 245), center, tip, 3)
+
+        spark_angle = self.visual_rotation + self.age * 0.21
+        for spark_index in range(3):
+            angle = spark_angle + spark_index * math.tau / 3
+            spark = (
+                int(center[0] + math.cos(angle) * 15),
+                int(center[1] + math.sin(angle) * 15),
+            )
+            pygame.draw.circle(screen, (255, 145, 205), spark, 2)
 
 
 # Raza verticala are mai intai o avertizare, apoi devine periculoasa.
@@ -127,6 +261,8 @@ class BossLaser:
         # dar nu atât de lung încât laserul să devină o pauză gratuită.
         self.warning_timer = int(warning_duration)
         self.active_timer = int(active_duration)
+        self.warning_duration = int(warning_duration)
+        self.active_duration = int(active_duration)
         self.finished = False
         self.animation_timer = 0
         self.rect = pygame.Rect(
@@ -150,7 +286,7 @@ class BossLaser:
     def is_dangerous(self):
         return self.warning_timer <= 0 and self.active_timer > 0
 
-    # Deseneaza linia de tinta sau coloana energetica activa.
+    # Desenează culoarul de avertizare sau coloana energetică activă.
     def draw(self, screen):
         overlay = pygame.Surface(
             (screen.get_width(), screen.get_height()),
@@ -158,35 +294,104 @@ class BossLaser:
         )
 
         if self.warning_timer > 0:
-            pulse = 70 + int(
-                70 * abs(math.sin(self.animation_timer * 0.18))
+            warning_progress = 1.0 - (
+                self.warning_timer / max(1, self.warning_duration)
+            )
+            pulse = 42 + int(
+                65 * abs(math.sin(self.animation_timer * 0.22))
+            )
+
+            # Culoarul transparent arată exact zona periculoasă.
+            pygame.draw.rect(
+                overlay,
+                (255, 25, 70, 18 + int(28 * warning_progress)),
+                self.rect,
             )
             pygame.draw.rect(
                 overlay,
-                (255, 45, 75, pulse),
-                (
-                    self.center_x - 3,
-                    0,
-                    6,
-                    self.screen_height,
-                ),
-            )
-            pygame.draw.rect(
-                overlay,
-                (255, 80, 95, 85),
+                (255, 70, 105, 75 + int(70 * warning_progress)),
                 self.rect,
                 2,
             )
+
+            # Linia de scanare pulsează tot mai rapid înainte de activare.
+            line_width = 2 + int(warning_progress * 4)
+            pygame.draw.line(
+                overlay,
+                (255, 105, 135, pulse + int(70 * warning_progress)),
+                (self.center_x, 0),
+                (self.center_x, self.screen_height),
+                line_width,
+            )
+
+            # Marcajele descendente elimină aspectul unei simple linii Pygame.
+            marker_spacing = 74
+            marker_offset = (self.animation_timer * 5) % marker_spacing
+            half_width = self.width // 2
+            for marker_y in range(
+                int(marker_offset) - marker_spacing,
+                self.screen_height + marker_spacing,
+                marker_spacing,
+            ):
+                for side in (-1, 1):
+                    edge_x = self.center_x + side * half_width
+                    points = [
+                        (edge_x, marker_y),
+                        (edge_x - side * 11, marker_y + 9),
+                        (edge_x, marker_y + 18),
+                    ]
+                    pygame.draw.lines(
+                        overlay,
+                        (255, 125, 145, 130),
+                        False,
+                        points,
+                        2,
+                    )
+
+            # Încărcarea din partea de sus sugerează sursa din afara arenei.
+            charge_radius = int(10 + warning_progress * self.width * 0.62)
+            pygame.draw.circle(
+                overlay,
+                (255, 35, 95, 38),
+                (self.center_x, 0),
+                charge_radius,
+            )
+            pygame.draw.circle(
+                overlay,
+                (255, 185, 210, 185),
+                (self.center_x, 2),
+                max(4, int(5 + warning_progress * 8)),
+            )
         else:
+            active_progress = 1.0 - (
+                self.active_timer / max(1, self.active_duration)
+            )
+            beam_pulse = 0.86 + 0.14 * math.sin(
+                self.animation_timer * 0.42
+            )
+
+            # Marginea întunecată separă raza de fundal și de boss.
             pygame.draw.rect(
                 overlay,
-                (255, 20, 65, 95),
+                (50, 0, 25, 190),
+                self.rect.inflate(12, 0),
+            )
+            pygame.draw.rect(
+                overlay,
+                (255, 15, 70, int(125 * beam_pulse)),
                 self.rect,
             )
-            inner_rect = self.rect.inflate(-self.width // 2, 0)
+
+            middle_rect = self.rect.inflate(-int(self.width * 0.42), 0)
             pygame.draw.rect(
                 overlay,
-                (255, 225, 240, 225),
+                (255, 95, 145, int(205 * beam_pulse)),
+                middle_rect,
+            )
+            inner_rect = self.rect.inflate(-int(self.width * 0.70), 0)
+            pygame.draw.rect(
+                overlay,
+                (255, 235, 245, 245),
                 inner_rect,
             )
             pygame.draw.line(
@@ -194,29 +399,62 @@ class BossLaser:
                 (255, 255, 255, 255),
                 (self.center_x, 0),
                 (self.center_x, self.screen_height),
-                5,
+                max(3, int(self.width * 0.08)),
             )
 
-            # O lumina discreta la marginea de sus sugereaza ca energia
-            # continua din afara arenei, nu ca laserul incepe din mijloc.
+            # Benzi de energie coboară prin fascicul cât timp acesta este activ.
+            band_spacing = 92
+            band_offset = (self.animation_timer * 13) % band_spacing
+            for band_y in range(
+                int(band_offset) - band_spacing,
+                self.screen_height + band_spacing,
+                band_spacing,
+            ):
+                band_left = (
+                    self.center_x - self.width // 2 + 5,
+                    band_y,
+                )
+                band_center = (self.center_x, band_y + 9)
+                band_right = (
+                    self.center_x + self.width // 2 - 5,
+                    band_y,
+                )
+                pygame.draw.lines(
+                    overlay,
+                    (255, 205, 225, 175),
+                    False,
+                    [band_left, band_center, band_right],
+                    3,
+                )
+
+            # Sursa de sus se dilată la pornire și rămâne conectată cu raza.
             source_glow = pygame.Surface(
-                (self.width * 2, 70),
+                (self.width * 3, 105),
                 pygame.SRCALPHA,
             )
-            for glow_index in range(6):
-                glow_width = self.width + glow_index * 18
-                glow_alpha = max(8, 70 - glow_index * 10)
+            source_center_x = source_glow.get_width() // 2
+            source_scale = 1.22 - active_progress * 0.12
+            for glow_index in range(7, 0, -1):
+                glow_width = int(
+                    (self.width + glow_index * 18) * source_scale
+                )
+                glow_alpha = max(8, 82 - glow_index * 8)
                 pygame.draw.ellipse(
                     source_glow,
                     (255, 65, 120, glow_alpha),
                     (
-                        source_glow.get_width() // 2
-                        - glow_width // 2,
-                        -35 + glow_index * 3,
+                        source_center_x - glow_width // 2,
+                        -45 + glow_index * 4,
                         glow_width,
-                        70,
+                        90,
                     ),
                 )
+            pygame.draw.circle(
+                source_glow,
+                (255, 245, 250, 235),
+                (source_center_x, 8),
+                max(6, self.width // 7),
+            )
             overlay.blit(
                 source_glow,
                 (
@@ -885,12 +1123,168 @@ class Boss:
 
         self._draw_core(screen)
         self._draw_generators(screen)
+        if self.transition_timer > 0:
+            self._draw_phase_transition_energy(screen)
+        if self.state == "dying":
+            self._draw_destruction_sequence(screen)
         self._draw_health_bar(screen)
 
         if self.state == "entering":
             self._draw_intro_warning(screen)
         elif self.phase_banner_timer > 0:
             self._draw_phase_banner(screen)
+
+    # Schimbarea fazei produce o undă vizibilă fără să schimbe gameplay-ul.
+    def _draw_phase_transition_energy(self, screen):
+        transition_progress = 1.0 - self.transition_timer / 150
+        transition_progress = max(0.0, min(1.0, transition_progress))
+        overlay = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+
+        if self.phase == 2:
+            primary_color = (135, 75, 255)
+            secondary_color = (210, 175, 255)
+        else:
+            primary_color = (255, 30, 105)
+            secondary_color = (255, 175, 210)
+
+        pulse = abs(math.sin(self.animation_timer * 0.16))
+        for ring_index in range(3):
+            ring_progress = (
+                transition_progress + ring_index * 0.22
+            ) % 1.0
+            ring_radius = int(42 + ring_progress * 245)
+            ring_alpha = int((1.0 - ring_progress) * (145 + pulse * 45))
+            pygame.draw.circle(
+                overlay,
+                (*primary_color, ring_alpha),
+                self.core_center,
+                ring_radius,
+                max(2, 7 - ring_index * 2),
+            )
+
+        rotation = self.animation_timer * 0.035
+        for ray_index in range(12):
+            angle = rotation + ray_index * math.tau / 12
+            inner_radius = 52 + int(pulse * 9)
+            outer_radius = 92 + int(transition_progress * 105)
+            ray_start = (
+                int(self.core_center[0] + math.cos(angle) * inner_radius),
+                int(self.core_center[1] + math.sin(angle) * inner_radius),
+            )
+            ray_end = (
+                int(self.core_center[0] + math.cos(angle) * outer_radius),
+                int(self.core_center[1] + math.sin(angle) * outer_radius),
+            )
+            pygame.draw.line(
+                overlay,
+                (*secondary_color, int(75 + pulse * 85)),
+                ray_start,
+                ray_end,
+                2,
+            )
+
+        pygame.draw.circle(
+            overlay,
+            (*primary_color, int(55 + pulse * 45)),
+            self.core_center,
+            int(62 + pulse * 18),
+        )
+        screen.blit(overlay, (0, 0))
+
+    # Înfrângerea dezintegrează progresiv corpul înainte de exploziile finale.
+    def _draw_destruction_sequence(self, screen):
+        destruction_progress = 1.0 - max(0, self.death_timer) / 240
+        overlay = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        pulse = abs(math.sin(self.animation_timer * 0.34))
+
+        # Fisurile pornesc din nucleu și ajung treptat la marginile navei.
+        fracture_targets = (
+            (-250, -92),
+            (-205, 55),
+            (-125, 118),
+            (-60, -120),
+            (55, 128),
+            (138, -112),
+            (215, 48),
+            (270, -72),
+        )
+        visible_fractures = max(
+            1,
+            int(len(fracture_targets) * min(1.0, destruction_progress * 1.6)),
+        )
+        for fracture_index, (offset_x, offset_y) in enumerate(
+            fracture_targets[:visible_fractures]
+        ):
+            target = (
+                self.core_center[0] + offset_x,
+                self.core_center[1] + offset_y,
+            )
+            midpoint = (
+                int((self.core_center[0] + target[0]) / 2 + offset_y * 0.08),
+                int((self.core_center[1] + target[1]) / 2 - offset_x * 0.05),
+            )
+            pygame.draw.lines(
+                overlay,
+                (255, 35, 95, int(135 + pulse * 90)),
+                False,
+                [self.core_center, midpoint, target],
+                2 + fracture_index % 2,
+            )
+            pygame.draw.circle(
+                overlay,
+                (255, 210, 225, 190),
+                midpoint,
+                2,
+            )
+
+        # Nucleul se comprimă, apoi eliberează inele tot mai mari.
+        collapse_radius = max(8, int(58 * (1.0 - destruction_progress * 0.72)))
+        pygame.draw.circle(
+            overlay,
+            (255, 20, 75, int(85 + pulse * 75)),
+            self.core_center,
+            collapse_radius * 2,
+        )
+        pygame.draw.circle(
+            overlay,
+            (255, 245, 248, int(175 + pulse * 70)),
+            self.core_center,
+            collapse_radius,
+        )
+
+        for ring_index in range(3):
+            ring_progress = (
+                destruction_progress * 2.4 + ring_index * 0.31
+            ) % 1.0
+            radius = int(45 + ring_progress * 310)
+            alpha = int((1.0 - ring_progress) * 150)
+            pygame.draw.circle(
+                overlay,
+                (255, 55, 105, alpha),
+                self.core_center,
+                radius,
+                4,
+            )
+
+        # Aproape de final, corpul pâlpâie alb înainte să dispară.
+        if destruction_progress > 0.78 and self.animation_timer % 8 < 3:
+            flash_alpha = int(
+                85 * (destruction_progress - 0.78) / 0.22
+            )
+            pygame.draw.rect(
+                overlay,
+                (255, 235, 240, flash_alpha),
+                self.rect,
+                border_radius=45,
+            )
+
+        screen.blit(overlay, (0, 0))
 
     # Nucleul devine foarte vizibil in ultima faza.
     def _draw_core(self, screen):

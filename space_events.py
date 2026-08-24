@@ -96,6 +96,7 @@ class SolarStormEvent:
         self.warning_timer = 0
         self.active_timer = 0
         self.recovery_timer = 0
+        self.animation_timer = 0
         self.pulse_timer = 0
         self.pulse_number = 0
         self.energy_columns = []
@@ -107,6 +108,8 @@ class SolarStormEvent:
 
     # Actualizează starea furtunii și returnează True la impact.
     def update(self, player_hitbox, wave):
+        self.animation_timer += 1
+
         if self.state == "idle":
             return False
 
@@ -296,6 +299,9 @@ class SolarStormEvent:
 
         self._draw_environment_tint(screen)
 
+        if self.state in ("warning", "active"):
+            self._draw_solar_embers(screen)
+
         if self.state == "warning":
             self._draw_global_warning(screen)
 
@@ -372,6 +378,19 @@ class SolarStormEvent:
             <= pulse_elapsed
             < PULSE_BLAST_END
         )
+        warning_progress = min(
+            1.0,
+            pulse_elapsed / max(1, PULSE_WARNING_END),
+        )
+        blast_progress = max(
+            0.0,
+            (
+                pulse_elapsed - PULSE_WARNING_END
+            ) / max(
+                1,
+                PULSE_BLAST_END - PULSE_WARNING_END,
+            ),
+        )
 
         column_surface = pygame.Surface(
             (
@@ -386,73 +405,298 @@ class SolarStormEvent:
                 self._draw_active_column(
                     column_surface,
                     column_rect,
+                    blast_progress,
                 )
             else:
                 self._draw_column_warning(
                     column_surface,
                     column_rect,
+                    warning_progress,
                 )
 
         screen.blit(column_surface, (0, 0))
 
+        # Primele cadre ale impactului produc o iluminare scurtă a arenei.
+        blast_age = pulse_elapsed - PULSE_WARNING_END
+        if blast_active and 0 <= blast_age < 11:
+            flash_strength = 1.0 - blast_age / 11
+            flash_surface = pygame.Surface(
+                (self.screen_width, self.screen_height),
+                pygame.SRCALPHA,
+            )
+            flash_surface.fill(
+                (255, 115, 35, int(48 * flash_strength))
+            )
+            screen.blit(flash_surface, (0, 0))
+
     # Desenează zona transparentă ce anunță următorul impuls.
-    @staticmethod
     def _draw_column_warning(
+        self,
         surface,
         column_rect,
+        warning_progress,
     ):
-        pygame.draw.rect(
-            surface,
-            (255, 80, 35, 38),
-            column_rect,
+        pulse = (
+            0.5
+            + 0.5 * math.sin(
+                self.animation_timer * 0.18
+                + column_rect.centerx * 0.015
+            )
         )
         pygame.draw.rect(
             surface,
-            (255, 155, 75, 155),
+            (255, 65, 25, int(22 + pulse * 22)),
             column_rect,
-            3,
         )
 
-        center_x = column_rect.centerx
-        pygame.draw.line(
+        # Glow-ul depășește discret hitbox-ul, fără să schimbe damage-ul.
+        warning_glow = column_rect.inflate(28, 0)
+        pygame.draw.rect(
             surface,
-            (255, 225, 170, 180),
-            (center_x, 0),
-            (center_x, column_rect.height),
+            (255, 85, 30, int(18 + pulse * 20)),
+            warning_glow,
+        )
+        pygame.draw.rect(
+            surface,
+            (255, 145, 65, int(115 + pulse * 90)),
+            column_rect,
             2,
         )
 
+        center_x = column_rect.centerx
+        scan_y = int(
+            (
+                self.animation_timer * 13
+                + column_rect.centerx * 0.7
+            )
+            % max(1, column_rect.height)
+        )
+        pygame.draw.line(
+            surface,
+            (255, 235, 180, 225),
+            (column_rect.left + 5, scan_y),
+            (column_rect.right - 5, scan_y),
+            3,
+        )
+
+        # Liniile oblice urcă prin culoar ca o telemetrie solară instabilă.
+        stripe_spacing = 46
+        stripe_offset = int(self.animation_timer * 3) % stripe_spacing
+        for stripe_y in range(
+            -stripe_spacing + stripe_offset,
+            column_rect.height + stripe_spacing,
+            stripe_spacing,
+        ):
+            pygame.draw.line(
+                surface,
+                (255, 175, 75, int(55 + 85 * warning_progress)),
+                (column_rect.left + 9, stripe_y + 16),
+                (column_rect.right - 9, stripe_y - 16),
+                2,
+            )
+
+        # Centrul devine mai luminos pe măsură ce se apropie impactul.
+        pygame.draw.line(
+            surface,
+            (255, 230, 165, int(80 + 135 * warning_progress)),
+            (center_x, 0),
+            (center_x, column_rect.height),
+            max(1, int(1 + warning_progress * 2)),
+        )
+
     # Desenează impulsul solar cu margine, energie și miez luminos.
-    @staticmethod
     def _draw_active_column(
+        self,
         surface,
         column_rect,
+        blast_progress,
     ):
-        pygame.draw.rect(
-            surface,
-            (255, 45, 15, 115),
-            column_rect,
+        pulse = (
+            0.82
+            + math.sin(
+                self.animation_timer * 0.42
+                + column_rect.centerx * 0.021
+            )
+            * 0.18
         )
 
-        middle_rect = column_rect.inflate(
-            -26,
-            0,
+        # Aura exterioară face coloana să lumineze fundalul.
+        outer_glow = column_rect.inflate(58, 0)
+        pygame.draw.rect(
+            surface,
+            (255, 35, 8, int(34 * pulse)),
+            outer_glow,
         )
         pygame.draw.rect(
             surface,
-            (255, 155, 45, 195),
-            middle_rect,
+            (255, 70, 12, int(92 * pulse)),
+            column_rect.inflate(22, 0),
         )
 
-        core_rect = column_rect.inflate(
-            -56,
-            0,
+        left_edge = self._build_solar_edge(
+            column_rect.left,
+            column_rect.height,
+            column_rect.centerx * 0.01,
         )
+        right_edge = self._build_solar_edge(
+            column_rect.right,
+            column_rect.height,
+            column_rect.centerx * 0.01 + 2.2,
+        )
+        plasma_polygon = (
+            left_edge
+            + list(reversed(right_edge))
+        )
+        pygame.draw.polygon(
+            surface,
+            (255, 72, 12, int(155 * pulse)),
+            plasma_polygon,
+        )
+
+        # Filamentele ondulate creează senzația de plasmă în mișcare.
+        filament_specs = [
+            (-0.28, 13, (255, 125, 25, 185), 10),
+            (0.27, 12, (255, 145, 35, 195), 9),
+            (-0.08, 8, (255, 225, 115, 225), 6),
+            (0.09, 5, (255, 255, 225, 245), 3),
+        ]
+        for (
+            horizontal_offset,
+            amplitude,
+            filament_color,
+            filament_width,
+        ) in filament_specs:
+            filament_points = []
+            for point_y in range(-20, column_rect.height + 25, 18):
+                wave_x = (
+                    math.sin(
+                        point_y * 0.035
+                        + self.animation_timer * 0.20
+                        + horizontal_offset * 8
+                    )
+                    * amplitude
+                )
+                filament_points.append(
+                    (
+                        int(
+                            column_rect.centerx
+                            + column_rect.width * horizontal_offset
+                            + wave_x
+                        ),
+                        point_y,
+                    )
+                )
+            pygame.draw.lines(
+                surface,
+                filament_color,
+                False,
+                filament_points,
+                filament_width,
+            )
+
+        # Descărcările scurte ies din miez în direcții alternante.
+        for spark_index in range(18):
+            spark_y = int(
+                (
+                    spark_index * 83
+                    - self.animation_timer * (7 + spark_index % 4)
+                )
+                % max(1, column_rect.height)
+            )
+            side = -1 if spark_index % 2 == 0 else 1
+            spark_start_x = int(
+                column_rect.centerx
+                + side * column_rect.width * 0.22
+            )
+            spark_length = 9 + spark_index % 5 * 3
+            pygame.draw.line(
+                surface,
+                (255, 205, 90, int(150 + 75 * pulse)),
+                (spark_start_x, spark_y),
+                (
+                    spark_start_x + side * spark_length,
+                    spark_y - 9,
+                ),
+                2,
+            )
+
+        # Un miez alb foarte subțire păstrează impactul lizibil.
+        core_width = max(5, int(column_rect.width * 0.12 * pulse))
         pygame.draw.rect(
             surface,
-            (255, 250, 215, 235),
-            core_rect,
+            (
+                255,
+                255,
+                235,
+                int(205 + 45 * (1.0 - blast_progress)),
+            ),
+            (
+                column_rect.centerx - core_width // 2,
+                0,
+                core_width,
+                column_rect.height,
+            ),
         )
+
+    # Construiește o margine verticală ce se mișcă diferit pe fiecare coloană.
+    def _build_solar_edge(self, base_x, height, phase):
+        edge_points = []
+        for point_y in range(-20, height + 25, 16):
+            turbulence = (
+                math.sin(
+                    point_y * 0.047
+                    + self.animation_timer * 0.17
+                    + phase
+                )
+                * 8
+                + math.sin(
+                    point_y * 0.103
+                    - self.animation_timer * 0.11
+                    + phase * 1.7
+                )
+                * 4
+            )
+            edge_points.append(
+                (int(base_x + turbulence), point_y)
+            )
+        return edge_points
+
+    # Particulele ambientale fac întreaga arenă să pară prinsă în furtună.
+    def _draw_solar_embers(self, screen):
+        ember_surface = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        ember_count = 34 if self.state == "active" else 18
+
+        for ember_index in range(ember_count):
+            ember_x = int(
+                (
+                    ember_index * 173
+                    + self.animation_timer * (3 + ember_index % 4)
+                )
+                % max(1, self.screen_width + 80)
+                - 40
+            )
+            ember_y = int(
+                (
+                    ember_index * 97
+                    + self.animation_timer * (5 + ember_index % 3)
+                )
+                % max(1, self.screen_height + 60)
+                - 30
+            )
+            ember_size = 1 + ember_index % 3
+            ember_alpha = 125 if self.state == "active" else 70
+            pygame.draw.line(
+                ember_surface,
+                (255, 135 + ember_index % 80, 45, ember_alpha),
+                (ember_x, ember_y),
+                (ember_x - 8 - ember_size * 2, ember_y - 4),
+                ember_size,
+            )
+
+        screen.blit(ember_surface, (0, 0))
 
     # Afișează starea impulsului solar activ.
     def _draw_active_status(self, screen):

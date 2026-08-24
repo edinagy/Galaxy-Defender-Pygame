@@ -13,6 +13,12 @@ class AllyBullet:
         self.y = float(start_y)
         self.width = 7
         self.height = 18
+        self.age = 0
+        self.trail_points = []
+        self.origin = (
+            int(start_x + self.width / 2),
+            int(start_y + self.height / 2),
+        )
 
         distance_x = target_x - start_x
         distance_y = target_y - start_y
@@ -38,6 +44,11 @@ class AllyBullet:
 
     # Deplasează proiectilul pe direcția calculată la lansare.
     def move(self):
+        self.age += 1
+        self.trail_points.append(self.rect.center)
+        if len(self.trail_points) > 10:
+            self.trail_points.pop(0)
+
         self.x += self.speed_x
         self.y += self.speed_y
         self.rect.topleft = (
@@ -45,26 +56,71 @@ class AllyBullet:
             int(self.y),
         )
 
-    # Desenează un laser cyan, diferit de proiectilele jucătorului.
+    def _direction_axes(self):
+        length = max(0.001, math.hypot(self.speed_x, self.speed_y))
+        direction = (self.speed_x / length, self.speed_y / length)
+        perpendicular = (-direction[1], direction[0])
+        return direction, perpendicular
+
+    @staticmethod
+    def _point(center, direction, perpendicular, forward, side=0):
+        return (
+            int(center[0] + direction[0] * forward + perpendicular[0] * side),
+            int(center[1] + direction[1] * forward + perpendicular[1] * side),
+        )
+
+    # Desenează o lance cyan orientată exact spre țintă.
     def draw(self, screen):
-        glow_rect = self.rect.inflate(8, 8)
-        pygame.draw.ellipse(
-            screen,
-            (25, 100, 190),
-            glow_rect,
-        )
-        pygame.draw.ellipse(
-            screen,
-            (80, 225, 255),
-            self.rect,
-        )
-        pygame.draw.line(
-            screen,
-            (235, 255, 255),
-            self.rect.midtop,
-            self.rect.midbottom,
-            2,
-        )
+        center = self.rect.center
+        direction, perpendicular = self._direction_axes()
+
+        # Coada dublă diferențiază sprijinul aliat de arma jucătorului.
+        if len(self.trail_points) >= 2:
+            point_count = len(self.trail_points)
+            for index in range(1, point_count):
+                progress = index / point_count
+                previous = self.trail_points[index - 1]
+                current = self.trail_points[index]
+                color = (
+                    int(20 + 35 * progress),
+                    int(65 + 120 * progress),
+                    int(105 + 145 * progress),
+                )
+                pygame.draw.line(
+                    screen,
+                    color,
+                    previous,
+                    current,
+                    max(1, int(5 * progress)),
+                )
+
+        tip = self._point(center, direction, perpendicular, 15)
+        tail = self._point(center, direction, perpendicular, -12)
+        left = self._point(center, direction, perpendicular, -1, 6)
+        right = self._point(center, direction, perpendicular, -1, -6)
+
+        pygame.draw.line(screen, (4, 35, 95), tail, tip, 12)
+        pygame.draw.polygon(screen, (25, 135, 225), [tip, left, tail, right])
+        pygame.draw.line(screen, (75, 225, 255), tail, tip, 6)
+        pygame.draw.line(screen, (240, 255, 255), center, tip, 2)
+        pygame.draw.circle(screen, (250, 255, 255), tip, 2)
+
+        # Flash-ul rămâne câteva cadre la gura tunului navei aliate.
+        if self.age < 7:
+            progress = self.age / 7
+            pygame.draw.circle(
+                screen,
+                (70, 210, 255),
+                self.origin,
+                int(5 + progress * 16),
+                2,
+            )
+            pygame.draw.circle(
+                screen,
+                (235, 255, 255),
+                self.origin,
+                max(1, int(5 * (1.0 - progress))),
+            )
 
 
 # Navă aliată care intră în arenă, luptă și apoi se retrage.
@@ -108,6 +164,7 @@ class AllyShip:
         )
         self.fire_timer = random.randint(20, 45)
         self.hit_flash_timer = 0
+        self.weapon_flash_timer = 0
 
         self.rect = self.image.get_rect(
             topleft=(int(self.x), int(self.y))
@@ -119,6 +176,8 @@ class AllyShip:
 
         if self.hit_flash_timer > 0:
             self.hit_flash_timer -= 1
+        if self.weapon_flash_timer > 0:
+            self.weapon_flash_timer -= 1
 
         if self.state == "entering":
             self.y += (
@@ -187,6 +246,7 @@ class AllyShip:
             ) ** 2,
         )
         self.fire_timer = random.randint(42, 62)
+        self.weapon_flash_timer = 8
 
         return AllyBullet(
             self.rect.centerx - 3,
@@ -274,6 +334,28 @@ class AllyShip:
             ship_image,
             (int(self.x), int(self.y)),
         )
+
+        # Tunul frontal luminează nava pentru câteva cadre după tragere.
+        if self.weapon_flash_timer > 0:
+            flash_progress = 1.0 - self.weapon_flash_timer / 8
+            muzzle_center = (
+                self.rect.centerx,
+                self.rect.top + 5,
+            )
+            flash_radius = int(6 + flash_progress * 18)
+            pygame.draw.circle(
+                screen,
+                (45, 185, 255),
+                muzzle_center,
+                flash_radius,
+                3,
+            )
+            pygame.draw.circle(
+                screen,
+                (235, 255, 255),
+                muzzle_center,
+                max(2, int(7 * (1.0 - flash_progress))),
+            )
 
         callsign_surface = small_font.render(
             self.callsign,
