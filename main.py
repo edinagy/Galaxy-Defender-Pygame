@@ -287,6 +287,8 @@ class GalaxyDefender:
         self.menu_enemy_spawn_timer = 0
         self.logo_timer = 0
         self.confirm_new_game = False
+        self.confirm_new_game_timer = 0
+        self.confirm_new_game_animation_duration = 36
 
         self._create_buttons()
 
@@ -416,16 +418,16 @@ class GalaxyDefender:
         )
 
         self.confirm_new_game_button = pygame.Rect(
-            370,
-            430,
-            250,
-            60,
+            310,
+            455,
+            310,
+            62,
         )
         self.cancel_new_game_button = pygame.Rect(
             660,
-            430,
-            250,
-            60,
+            455,
+            310,
+            62,
         )
 
         self.resume_button = pygame.Rect(
@@ -875,13 +877,16 @@ class GalaxyDefender:
                 current_scene == SceneManager.MENU
                 and self.confirm_new_game
             ):
-                if event.key == pygame.K_y:
+                if event.key in (
+                    pygame.K_y,
+                    pygame.K_RETURN,
+                ):
                     self._confirm_new_campaign()
                 elif event.key in (
                     pygame.K_n,
                     pygame.K_ESCAPE,
                 ):
-                    self.confirm_new_game = False
+                    self._cancel_new_game_confirmation()
                 return
 
             if event.key == pygame.K_ESCAPE:
@@ -946,6 +951,9 @@ class GalaxyDefender:
     # Procesează butoanele PLAY, LEADERBOARD, SETTINGS și EXIT.
     def _handle_menu_click(self, mouse_position):
         if self.confirm_new_game:
+            if self.confirm_new_game_timer < 14:
+                return
+
             if (
                 self.confirm_new_game_button.collidepoint(
                     mouse_position
@@ -958,7 +966,7 @@ class GalaxyDefender:
                     mouse_position
                 )
             ):
-                self.confirm_new_game = False
+                self._cancel_new_game_confirmation()
 
             return
 
@@ -978,6 +986,7 @@ class GalaxyDefender:
 
             elif action == "new_game":
                 self.confirm_new_game = True
+                self.confirm_new_game_timer = 0
 
             elif action == "leaderboard":
                 self.scene_manager.change_scene(
@@ -1284,8 +1293,14 @@ class GalaxyDefender:
     def _confirm_new_campaign(self):
         self.save_manager.reset_campaign()
         self.confirm_new_game = False
+        self.confirm_new_game_timer = 0
 
         self._start_first_campaign()
+
+    # Închide avertizarea fără să modifice progresul existent.
+    def _cancel_new_game_confirmation(self):
+        self.confirm_new_game = False
+        self.confirm_new_game_timer = 0
 
     # Salvează imediat valorile curente din meniul Settings.
     def _save_current_settings(self):
@@ -1428,6 +1443,12 @@ class GalaxyDefender:
 
     # Actualizează animațiile decorative din meniul principal.
     def _update_menu(self):
+        if self.confirm_new_game:
+            self.confirm_new_game_timer = min(
+                self.confirm_new_game_animation_duration,
+                self.confirm_new_game_timer + 1,
+            )
+
         self.menu_ship_float_timer += 0.035
         self.menu_player.x = self.menu_ship_base_x + math.sin(
             self.menu_ship_float_timer * 0.58
@@ -2488,86 +2509,374 @@ class GalaxyDefender:
             (self.exit_button, "EXIT", "exit"),
         ]
 
-    # Desenează confirmarea necesară înainte de resetarea campaniei.
+    # Desenează unul dintre cele două protocoale ale avertizării NEW GAME.
+    def _draw_new_game_choice_button(
+        self,
+        button_rect,
+        title,
+        subtitle,
+        mouse_position,
+        visibility,
+        dangerous=False,
+    ):
+        is_hovered = button_rect.collidepoint(mouse_position)
+        pulse = (
+            math.sin(pygame.time.get_ticks() * 0.008) + 1.0
+        ) / 2.0
+
+        if dangerous:
+            accent = (255, 111, 77)
+            fill = (
+                (118, 37, 38, 245)
+                if is_hovered
+                else (58, 23, 31, 235)
+            )
+        else:
+            accent = (80, 215, 255)
+            fill = (
+                (15, 82, 116, 245)
+                if is_hovered
+                else (8, 29, 55, 235)
+            )
+
+        if is_hovered:
+            glow_surface = pygame.Surface(
+                (button_rect.width + 22, button_rect.height + 22),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                glow_surface,
+                (*accent, int((30 + pulse * 24) * visibility)),
+                glow_surface.get_rect(),
+                border_radius=16,
+            )
+            self.screen.blit(
+                glow_surface,
+                (button_rect.x - 11, button_rect.y - 11),
+            )
+
+        button_surface = pygame.Surface(
+            button_rect.size,
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            button_surface,
+            fill,
+            button_surface.get_rect(),
+            border_radius=11,
+        )
+        pygame.draw.rect(
+            button_surface,
+            (*accent, 245 if is_hovered else 175),
+            button_surface.get_rect(),
+            2,
+            border_radius=11,
+        )
+        pygame.draw.line(
+            button_surface,
+            (*accent, 245),
+            (1, 10),
+            (1, button_rect.height - 10),
+            4,
+        )
+
+        icon_rect = pygame.Rect(14, 13, 36, 36)
+        pygame.draw.rect(
+            button_surface,
+            (5, 13, 30, 185),
+            icon_rect,
+            border_radius=9,
+        )
+        pygame.draw.rect(
+            button_surface,
+            (*accent, 145),
+            icon_rect,
+            1,
+            border_radius=9,
+        )
+        icon_center = icon_rect.center
+        if dangerous:
+            pygame.draw.arc(
+                button_surface,
+                accent,
+                pygame.Rect(
+                    icon_center[0] - 9,
+                    icon_center[1] - 9,
+                    18,
+                    18,
+                ),
+                math.radians(35),
+                math.radians(315),
+                2,
+            )
+            pygame.draw.polygon(
+                button_surface,
+                accent,
+                (
+                    (icon_center[0] + 7, icon_center[1] - 9),
+                    (icon_center[0] + 12, icon_center[1] - 5),
+                    (icon_center[0] + 5, icon_center[1] - 3),
+                ),
+            )
+        else:
+            pygame.draw.line(
+                button_surface,
+                accent,
+                (icon_center[0] - 7, icon_center[1] - 7),
+                (icon_center[0] + 7, icon_center[1] + 7),
+                2,
+            )
+            pygame.draw.line(
+                button_surface,
+                accent,
+                (icon_center[0] + 7, icon_center[1] - 7),
+                (icon_center[0] - 7, icon_center[1] + 7),
+                2,
+            )
+
+        title_surface = self.menu_subtitle_font.render(
+            title,
+            True,
+            (250, 250, 255),
+        )
+        subtitle_surface = self.menu_micro_font.render(
+            subtitle,
+            True,
+            accent,
+        )
+        button_surface.blit(title_surface, (64, 9))
+        button_surface.blit(subtitle_surface, (64, 37))
+        button_surface.set_alpha(int(255 * visibility))
+        self.screen.blit(button_surface, button_rect.topleft)
+
+    # Desenează avertizarea premium înainte de resetarea campaniei.
     def _draw_new_game_confirmation(self):
+        entrance_progress = min(
+            1.0,
+            self.confirm_new_game_timer
+            / self.confirm_new_game_animation_duration,
+        )
+        eased_progress = 1.0 - (1.0 - entrance_progress) ** 3
+        content_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.confirm_new_game_timer - 3) / 18,
+            ),
+        )
+
         overlay = pygame.Surface(
             (self.width, self.height),
             pygame.SRCALPHA,
         )
-        overlay.fill((0, 0, 0, 190))
+        overlay.fill((1, 3, 12, int(220 * eased_progress)))
+        scan_offset = self.confirm_new_game_timer * 4 % 48
+        for scan_y in range(int(scan_offset) - 48, self.height, 48):
+            pygame.draw.line(
+                overlay,
+                (255, 92, 70, int(11 * eased_progress)),
+                (0, scan_y),
+                (self.width, scan_y),
+                1,
+            )
         self.screen.blit(overlay, (0, 0))
 
-        panel = pygame.Rect(
-            250,
-            210,
-            780,
-            330,
-        )
+        panel = pygame.Rect(270, 145, 740, 430)
+        panel_surface = pygame.Surface(panel.size, pygame.SRCALPHA)
         pygame.draw.rect(
-            self.screen,
-            (20, 25, 55),
-            panel,
+            panel_surface,
+            (5, 10, 27, int(246 * eased_progress)),
+            panel_surface.get_rect(),
             border_radius=20,
         )
         pygame.draw.rect(
-            self.screen,
-            (100, 180, 255),
-            panel,
-            3,
+            panel_surface,
+            (130, 80, 150, int(155 * eased_progress)),
+            panel_surface.get_rect(),
+            2,
             border_radius=20,
         )
+        pygame.draw.line(
+            panel_surface,
+            (255, 100, 78, int(245 * eased_progress)),
+            (38, 1),
+            (panel.width // 2, 1),
+            4,
+        )
+        pygame.draw.line(
+            panel_surface,
+            (70, 210, 255, int(220 * eased_progress)),
+            (panel.width // 2, 1),
+            (panel.width - 38, 1),
+            4,
+        )
+        self.screen.blit(panel_surface, panel.topleft)
 
+        status = self.menu_micro_font.render(
+            "GALACTIC DEFENSE COMMAND  //  SECURE CAMPAIGN CONTROL",
+            True,
+            (115, 175, 210),
+        )
         title = self.menu_font.render(
-            "START A NEW CAMPAIGN?",
+            "REINITIALIZE CAMPAIGN?",
             True,
-            (255, 255, 255),
+            (245, 249, 255),
         )
-        warning = self.font.render(
-            "Campaign progress will be reset.",
+        warning = self.menu_label_font.render(
+            "THIS ACTION RESTARTS THE STORY FROM THE HOMEWORLD",
             True,
-            (255, 180, 100),
+            (255, 153, 92),
         )
-        preserved = self.font.render(
-            "High score and settings will be kept.",
-            True,
-            (180, 220, 255),
-        )
+        for text_surface in (status, title, warning):
+            text_surface.set_alpha(int(255 * content_visibility))
 
+        self.screen.blit(
+            status,
+            (
+                self.width // 2 - status.get_width() // 2,
+                panel.y + 24,
+            ),
+        )
         self.screen.blit(
             title,
             (
-                self.width // 2
-                - title.get_width() // 2,
-                260,
+                self.width // 2 - title.get_width() // 2,
+                panel.y + 50,
             ),
         )
         self.screen.blit(
             warning,
             (
-                self.width // 2
-                - warning.get_width() // 2,
-                335,
-            ),
-        )
-        self.screen.blit(
-            preserved,
-            (
-                self.width // 2
-                - preserved.get_width() // 2,
-                375,
+                self.width // 2 - warning.get_width() // 2,
+                panel.y + 108,
             ),
         )
 
-        mouse_position = self._get_mouse_position()
-        self._draw_button(
-            self.confirm_new_game_button,
-            "YES",
-            mouse_position,
+        saved_data = self.save_manager.data
+        scene_name = str(
+            saved_data.get("current_scene", "planet")
+        ).replace("_", " ").upper()
+        checkpoint = max(
+            0,
+            int(saved_data.get("checkpoint", 0)),
         )
-        self._draw_button(
-            self.cancel_new_game_button,
-            "NO",
+        campaign_score = self._format_menu_score(
+            saved_data.get("campaign_score", 0)
+        )
+        best_score = self._format_menu_score(
+            saved_data.get("highest_score", 0)
+        )
+
+        card_y = panel.y + 142
+        left_card = pygame.Rect(panel.x + 38, card_y, 322, 126)
+        right_card = pygame.Rect(panel.x + 380, card_y, 322, 126)
+        card_definitions = (
+            (
+                left_card,
+                "CAMPAIGN DATA // WILL RESET",
+                (255, 111, 77),
+                (
+                    f"CURRENT SECTOR  //  {scene_name}",
+                    f"SAFE CHECKPOINT  //  {checkpoint:02d}",
+                    f"MISSION SCORE  //  {campaign_score}",
+                ),
+            ),
+            (
+                right_card,
+                "PILOT DATA // WILL BE PRESERVED",
+                (80, 220, 180),
+                (
+                    f"GALACTIC BEST  //  {best_score}",
+                    "AUDIO AND DISPLAY SETTINGS",
+                    "LEADERBOARD RECORDS",
+                ),
+            ),
+        )
+        for card_rect, card_title, accent, rows in card_definitions:
+            card_surface = pygame.Surface(
+                card_rect.size,
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                card_surface,
+                (9, 18, 39, int(224 * content_visibility)),
+                card_surface.get_rect(),
+                border_radius=12,
+            )
+            pygame.draw.rect(
+                card_surface,
+                (*accent, int(150 * content_visibility)),
+                card_surface.get_rect(),
+                1,
+                border_radius=12,
+            )
+            pygame.draw.line(
+                card_surface,
+                (*accent, int(220 * content_visibility)),
+                (15, 38),
+                (card_rect.width - 15, 38),
+                2,
+            )
+            self.screen.blit(card_surface, card_rect.topleft)
+
+            card_title_surface = self.menu_label_font.render(
+                card_title,
+                True,
+                accent,
+            )
+            card_title_surface.set_alpha(
+                int(255 * content_visibility)
+            )
+            self.screen.blit(
+                card_title_surface,
+                (card_rect.x + 16, card_rect.y + 13),
+            )
+            for row_index, row_text in enumerate(rows):
+                row_surface = self.menu_micro_font.render(
+                    row_text,
+                    True,
+                    (170, 193, 220),
+                )
+                row_surface.set_alpha(
+                    int(255 * content_visibility)
+                )
+                self.screen.blit(
+                    row_surface,
+                    (
+                        card_rect.x + 18,
+                        card_rect.y + 50 + row_index * 23,
+                    ),
+                )
+
+        mouse_position = self._get_mouse_position()
+        self._draw_new_game_choice_button(
+            self.confirm_new_game_button,
+            "BEGIN NEW CAMPAIGN",
+            "RESET CAMPAIGN DATA",
             mouse_position,
+            content_visibility,
+            dangerous=True,
+        )
+        self._draw_new_game_choice_button(
+            self.cancel_new_game_button,
+            "CANCEL",
+            "KEEP CURRENT PROGRESS",
+            mouse_position,
+            content_visibility,
+        )
+
+        hint = self.menu_micro_font.render(
+            "ENTER / Y  //  CONFIRM        ESC / N  //  CANCEL",
+            True,
+            (105, 130, 162),
+        )
+        hint.set_alpha(int(255 * content_visibility))
+        self.screen.blit(
+            hint,
+            (
+                self.width // 2 - hint.get_width() // 2,
+                panel.bottom - 31,
+            ),
         )
 
     # Desenează logo-ul animat GALAXY DEFENDER și efectul său de lumină.
