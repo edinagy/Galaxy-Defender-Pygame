@@ -349,6 +349,7 @@ def draw_game_ui(
     wave,
     multiplier,
     player=None,
+    stage=1,
 ):
     screen_width = screen.get_width()
     pulse = (
@@ -518,7 +519,7 @@ def draw_game_ui(
     )
 
     wave_label = label_font.render(
-        "HOSTILE WAVE",
+        f"STAGE {stage:02d}  //  WAVE",
         True,
         (125, 180, 215),
     )

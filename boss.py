@@ -470,9 +470,29 @@ class BossLaser:
 # Nava-fortareata care incheie lupta din sistemul Dead Star.
 class Boss:
 
-    def __init__(self, screen_width=1280, screen_height=720):
+    def __init__(
+        self,
+        screen_width=1280,
+        screen_height=720,
+        difficulty_stage=1,
+    ):
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.difficulty_stage = max(1, int(difficulty_stage))
+        stage_progress = self.difficulty_stage - 1
+        self.stage_health_multiplier = 1.0 + stage_progress * 0.35
+        self.stage_attack_rate = min(
+            2.0,
+            1.0 + stage_progress * 0.20,
+        )
+        self.stage_projectile_speed = min(
+            1.65,
+            1.0 + stage_progress * 0.12,
+        )
+        self.stage_movement_speed = min(
+            1.60,
+            1.0 + stage_progress * 0.12,
+        )
         # Dimensiunile pastreaza proportiile noului sprite lat de final boss.
         self.width = 620
         self.height = 350
@@ -490,7 +510,9 @@ class Boss:
         # Bossul are trei faze egale ca viata.
         # 1200 HP inseamna de sase ori viata vechiului boss, fara ca lupta
         # sa ceara sute de apasari inutile pe SPACE.
-        self.max_hp = 1200
+        self.max_hp = int(
+            round(1200 * self.stage_health_multiplier)
+        )
         self.hp = self.max_hp
         self.phase = 1
         self.phase_two = False
@@ -509,7 +531,9 @@ class Boss:
         self.core_burst_alternate = False
 
         # In faza a doua, corpul este protejat de doua generatoare.
-        self.generator_max_hp = 120
+        self.generator_max_hp = int(
+            round(120 * self.stage_health_multiplier)
+        )
         self.generator_hp = [0, 0]
         self.generator_rects = [
             pygame.Rect(0, 0, 110, 110),
@@ -651,7 +675,9 @@ class Boss:
             vertical_amplitude = 16
 
         self.x = center_x + math.sin(
-            self.movement_timer * movement_speed
+            self.movement_timer
+            * movement_speed
+            * self.stage_movement_speed
         ) * amplitude
         self.y = self.target_y + math.sin(
             self.movement_timer * 0.018
@@ -666,14 +692,14 @@ class Boss:
         # enormă care exista după dispariția razei.
         if self.lasers:
             if self.animation_timer % 2 == 0:
-                self.primary_attack_timer += 1
+                self.primary_attack_timer += self.stage_attack_rate
             if self.animation_timer % 3 == 0:
-                self.special_attack_timer += 1
+                self.special_attack_timer += self.stage_attack_rate
             return new_projectiles
 
-        self.primary_attack_timer += 1
-        self.special_attack_timer += 1
-        self.laser_attack_timer += 1
+        self.primary_attack_timer += self.stage_attack_rate
+        self.special_attack_timer += self.stage_attack_rate
+        self.laser_attack_timer += self.stage_attack_rate
         desperation = self.hp <= self.max_hp * 0.10
 
         if self.phase == 1:
@@ -755,7 +781,7 @@ class Boss:
                 origin_x,
                 origin_y + 22,
                 target_angle + start_offset + index * spread,
-                speed,
+                speed * self.stage_projectile_speed,
                 "plasma",
             )
             for index in range(bullet_count)
@@ -778,7 +804,7 @@ class Boss:
                         cannon_x,
                         self.y + 205,
                         base_angle + offset,
-                        5.0,
+                        5.0 * self.stage_projectile_speed,
                         "heavy" if abs(offset) < 0.10 else "plasma",
                     )
                 )
@@ -808,7 +834,7 @@ class Boss:
                     origin_x,
                     origin_y + 25,
                     angle,
-                    5.2,
+                    5.2 * self.stage_projectile_speed,
                     "core",
                 )
             )
@@ -835,7 +861,7 @@ class Boss:
                     start_x,
                     start_y,
                     target_angle,
-                    4.0,
+                    4.0 * self.stage_projectile_speed,
                     "seeker",
                 )
             )
@@ -862,6 +888,10 @@ class Boss:
             2: 68,
             3: 62,
         }[laser_count]
+        warning_duration = max(
+            44,
+            int(warning_duration / self.stage_attack_rate),
+        )
         active_duration = {
             1: 38,
             2: 42,
@@ -1481,8 +1511,16 @@ class Boss:
             True,
             (255, 75, 105),
         )
+        boss_warning = (
+            "THE DEAD STAR SOVEREIGN APPROACHES"
+            if self.difficulty_stage == 1
+            else (
+                f"SOVEREIGN PROTOCOL {self.difficulty_stage - 1:02d} "
+                "ACTIVATED"
+            )
+        )
         subtitle = self.phase_font.render(
-            "THE DEAD STAR SOVEREIGN APPROACHES",
+            boss_warning,
             True,
             (240, 220, 230),
         )

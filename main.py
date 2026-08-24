@@ -3553,8 +3553,12 @@ class GalaxyDefender:
             ),
             (
                 pygame.Rect(365, 305, 110, 66),
-                "WAVE",
-                f"{max(1, int(self.gameplay.wave * count_progress)):02d}",
+                "STAGE / WAVE",
+                (
+                    f"{max(1, int(self.gameplay.stage * count_progress)):02d}"
+                    " / "
+                    f"{max(1, int(self.gameplay.wave * count_progress)):02d}"
+                ),
                 (150, 115, 245),
             ),
             (

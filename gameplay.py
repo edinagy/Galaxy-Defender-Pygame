@@ -165,6 +165,15 @@ class Gameplay:
         # Valoare temporară pentru testarea tuturor evenimentelor.
         # După ce terminăm testele, revenim la 5 vieți.
         self.lives = 100
+        # Stage 1 este războiul actual din domeniul Dead Star. După fiecare
+        # Sovereign distrus, lupta continuă într-un strat mai adânc al
+        # sistemului, fără să reseteze scorul, nava sau upgrade-urile.
+        self.stage = 1
+        self.completed_stage = 0
+        self.last_stage_bonus = 0
+        self.stage_transition_timer = 0
+        self.stage_transition_duration = 270
+        self._apply_stage_background_tint()
         self.wave = 1
         self.boss_count = 0
         self.enemies_killed = 0
@@ -243,6 +252,8 @@ class Gameplay:
         )
         self.first_formation_spawned = False
         self.elite_waves_spawned = set()
+        self.shield_carrier_waves_spawned = set()
+        self.phase_hunter_waves_spawned = set()
         self.background_timer = 0
 
         # Un wave nu poate fi schimbat instantaneu doar pentru că jucătorul
@@ -254,7 +265,7 @@ class Gameplay:
         self.wave_transition_duration = 72
 
         # Evenimentele revin la cooldown la fiecare rundă nouă.
-        self.space_event_manager.reset()
+        self.space_event_manager.reset(self.stage)
 
         self.game_over = False
 
@@ -337,6 +348,7 @@ class Gameplay:
             or self.victory
             or self.battle_intro_timer > 0
             or self.boss_phase_transition_timer > 0
+            or self.stage_transition_timer > 0
             or self.energy_pulse_timer > 0
         )
         if ability_is_blocked:
@@ -361,6 +373,29 @@ class Gameplay:
             object_rect.centerx - self.player.rect.centerx,
             object_rect.centery - self.player.rect.centery,
         ) <= pulse_radius
+
+    # Găsește câmpul care protejează ținta; Carrier-ul însuși rămâne expus.
+    def _get_protecting_shield_carrier(self, target_enemy):
+        if (
+            target_enemy.enemy_type == "shield_carrier"
+            or not target_enemy.can_be_hit()
+        ):
+            return None
+
+        for carrier in self.enemies:
+            if not carrier.shield_is_active():
+                continue
+
+            distance = math.hypot(
+                target_enemy.rect.centerx
+                - carrier.rect.centerx,
+                target_enemy.rect.centery
+                - carrier.rect.centery,
+            )
+            if distance <= carrier.shield_radius:
+                return carrier
+
+        return None
 
     # Extinde unda, curăță proiectile și rănește pericolele o singură dată.
     def _update_energy_pulse(self):
@@ -404,10 +439,17 @@ class Gameplay:
                 )
 
         # Navele normale primesc trei puncte de damage; elita rămâne o luptă.
-        for enemy in self.enemies[:]:
+        pulse_targets = sorted(
+            self.enemies[:],
+            key=lambda enemy: (
+                enemy.enemy_type == "shield_carrier"
+            ),
+        )
+        for enemy in pulse_targets:
             object_id = id(enemy)
             if (
                 object_id in self.energy_pulse_hit_objects
+                or not enemy.can_be_hit()
                 or not self._energy_pulse_reached(
                     enemy.rect,
                     pulse_radius,
@@ -416,6 +458,17 @@ class Gameplay:
                 continue
 
             self.energy_pulse_hit_objects.add(object_id)
+            protecting_carrier = (
+                self._get_protecting_shield_carrier(
+                    enemy
+                )
+            )
+            if protecting_carrier is not None:
+                protecting_carrier.register_shield_hit(
+                    enemy.rect.center
+                )
+                continue
+
             for _ in range(3):
                 enemy.take_damage()
                 if enemy.is_dead():
@@ -629,6 +682,16 @@ class Gameplay:
                 self._finish_player_destruction()
             return
 
+        # După distrugerea Sovereignului, efectele finale continuă în fundal,
+        # apoi următorul stage pornește cu progresul jucătorului păstrat.
+        if self.stage_transition_timer > 0 and not self.game_over:
+            self.stage_transition_timer -= 1
+            self._update_effects()
+
+            if self.stage_transition_timer <= 0:
+                self._begin_next_stage()
+            return
+
         if self.game_over or self.victory:
             self.result_animation_timer = min(
                 self.result_animation_duration,
@@ -669,6 +732,8 @@ class Gameplay:
             if self.wave_transition_timer == 0:
                 self.enemy_spawn_timer = 0
                 self._spawn_elite_for_wave()
+                self._spawn_shield_carrier_for_wave()
+                self._spawn_phase_hunter_for_wave()
 
             return
 
@@ -759,10 +824,24 @@ class Gameplay:
         event_hit = (
             self.space_event_manager.update(
                 player_hitbox,
-                self.wave,
+                self._get_stage_difficulty_wave(),
                 self.player.shield,
             )
         )
+        self._play_new_event_sound()
+
+        phase_storm_reward = (
+            self.space_event_manager
+            .consume_phase_storm_reward()
+        )
+        if phase_storm_reward > 0:
+            self.combo += 5
+            self._update_multiplier()
+            self._award_score(
+                phase_storm_reward,
+                apply_combo=True,
+            )
+            self._charge_energy_pulse(18)
 
         # Gravity Wave impinge nava si curbeaza toate proiectilele.
         # Efectul este aplicat dupa miscarea jucatorului, astfel incat
@@ -835,8 +914,6 @@ class Gameplay:
             )
         )
 
-        # Dupa update stim exact daca un challenge nou tocmai a inceput.
-        self._play_new_event_sound()
         return True
 
     # Reda o singura data efectul asociat challenge-ului care tocmai a pornit.
@@ -869,6 +946,9 @@ class Gameplay:
             event_name = "crossfire"
         elif current_event is manager.missile_barrage:
             event_name = "missile_barrage"
+        elif current_event is manager.phase_storm:
+            # Refolosește alarma dimensională existentă; nu cere asset audio nou.
+            event_name = "black_hole"
         else:
             return
 
@@ -1358,7 +1438,7 @@ class Gameplay:
             )
 
             if event_ended_early:
-                self.score += 1000
+                self._award_score(1000)
                 self.crossfire_bonus_awarded = True
                 self.crossfire_formation_deployed = False
 
@@ -1467,8 +1547,9 @@ class Gameplay:
             self.combo += 1
             self.combo_timer = 170
             self._update_multiplier()
-            self.score += (
-                missile.points * self.multiplier
+            self._award_score(
+                missile.points,
+                apply_combo=True,
             )
             self._charge_energy_pulse(1)
 
@@ -1501,11 +1582,14 @@ class Gameplay:
                     enemy_y,
                     enemy_type,
                     self.wave,
+                    self.stage,
                 )
             )
 
         # Primul wave primeste elita imediat dupa formatia introductiva.
         self._spawn_elite_for_wave()
+        self._spawn_shield_carrier_for_wave()
+        self._spawn_phase_hunter_for_wave()
         self.first_formation_spawned = True
         self.enemy_spawn_timer = 0
 
@@ -1521,16 +1605,86 @@ class Gameplay:
                 -300,
                 "elite",
                 self.wave,
+                self.stage,
             )
         )
         self.elite_waves_spawned.add(self.wave)
 
+    # Stage 2 introduce un Carrier la fiecare wave impar; Stage 3+ la fiecare.
+    def _spawn_shield_carrier_for_wave(self):
+        if (
+            self.stage < 2
+            or self.wave in self.shield_carrier_waves_spawned
+        ):
+            return
+
+        spawn_every_wave = self.stage >= 3
+        if not spawn_every_wave and self.wave % 2 == 0:
+            return
+
+        if any(
+            enemy.enemy_type == "shield_carrier"
+            for enemy in self.enemies
+        ):
+            return
+
+        carrier_width = 230
+        carrier_x = (
+            self.width - carrier_width - 85
+            if self.wave % 2 == 1
+            else 85
+        )
+        self.enemies.append(
+            Enemy(
+                carrier_x,
+                -360,
+                "shield_carrier",
+                self.wave,
+                self.stage,
+            )
+        )
+        self.shield_carrier_waves_spawned.add(
+            self.wave
+        )
+
+    # Phase Hunter-ul alternează cu Carrier-ul în Stage 2 și revine pe wave-uri
+    # pare în stage-urile următoare, unde cele două amenințări se pot combina.
+    def _spawn_phase_hunter_for_wave(self):
+        if (
+            self.stage < 2
+            or self.wave % 2 == 1
+            or self.wave in self.phase_hunter_waves_spawned
+        ):
+            return
+
+        if any(
+            enemy.enemy_type == "phase_hunter"
+            for enemy in self.enemies
+        ):
+            return
+
+        hunter_width = 178
+        hunter_x = (
+            85
+            if (self.wave // 2) % 2 == 1
+            else self.width - hunter_width - 85
+        )
+        self.enemies.append(
+            Enemy(
+                hunter_x,
+                -280,
+                "phase_hunter",
+                self.wave,
+                self.stage,
+            )
+        )
+        self.phase_hunter_waves_spawned.add(self.wave)
+
     def _update_combo(self):
-        if self.combo_timer > 0:
-            self.combo_timer -= 1
-        else:
-            self.combo = 0
-            self.multiplier = 1
+        # Combo-ul este acum o serie de supraviețuire: nu expiră în timp și
+        # continuă prin pauzele dintre wave-uri. Este resetat numai când
+        # jucătorul pierde efectiv o viață.
+        return
 
     def _update_multiplier(self):
         if self.combo >= 50:
@@ -1557,9 +1711,16 @@ class Gameplay:
             4,
             combat_score // 5000,
         )
+        stage_reduction = min(
+            16,
+            max(0, self.stage - 1) * 8,
+        )
         self.spawn_delay = max(
-            38,
-            70 - wave_reduction - score_reduction,
+            24,
+            70
+            - wave_reduction
+            - score_reduction
+            - stage_reduction,
         )
 
     # Creează numai inamici normali; boss-ul final va avea un trigger separat.
@@ -1679,6 +1840,7 @@ class Gameplay:
                 -100,
                 enemy_type,
                 self.wave,
+                self.stage,
             )
         )
 
@@ -1732,6 +1894,37 @@ class Gameplay:
                         enemy.elite_charge_duration
                     )
 
+                continue
+
+            # PHASE HUNTER: atacă numai imediat după rematerializare.
+            if enemy.enemy_type == "phase_hunter":
+                if enemy.consume_phase_attack():
+                    self._fire_phase_hunter_salvo(enemy)
+                continue
+
+            # SHIELD CARRIER: două impulsuri cyan; nava rămâne în arenă.
+            if enemy.enemy_type == "shield_carrier":
+                if enemy.shoot_timer > 0:
+                    continue
+
+                for horizontal_offset in (-34, 34):
+                    self.enemy_bullets.append(
+                        EnemyBullet(
+                            enemy.rect.centerx
+                            + horizontal_offset
+                            - 7,
+                            enemy.rect.bottom - 22,
+                            0,
+                            3.15
+                            * enemy.projectile_speed_multiplier,
+                            "shield",
+                        )
+                    )
+
+                enemy.shoot_timer = enemy.get_attack_delay(
+                    330,
+                    450,
+                )
                 continue
 
             # SCOUT ROSU: doua proiectile rapide, trase pe rand intr-o rafala.
@@ -1861,6 +2054,32 @@ class Gameplay:
                 )
             )
 
+    # Trei proiectile urmăresc poziția curentă a jucătorului, cu o deviere mică.
+    def _fire_phase_hunter_salvo(self, enemy):
+        origin_x = enemy.rect.centerx
+        origin_y = enemy.rect.bottom - 18
+        target_x = self.player.rect.centerx
+        target_y = self.player.rect.centery
+        center_angle = math.atan2(
+            target_y - origin_y,
+            target_x - origin_x,
+        )
+        projectile_speed = (
+            5.2 * enemy.projectile_speed_multiplier
+        )
+
+        for angle_offset in (-0.16, 0, 0.16):
+            projectile_angle = center_angle + angle_offset
+            self.enemy_bullets.append(
+                EnemyBullet(
+                    origin_x - 8,
+                    origin_y - 11,
+                    math.cos(projectile_angle) * projectile_speed,
+                    math.sin(projectile_angle) * projectile_speed,
+                    "phase",
+                )
+            )
+
     # Creeaza bossul imediat dupa terminarea celor noua challenge-uri.
     def _start_final_boss_if_ready(self):
         if self.boss_spawned or self.victory:
@@ -1887,6 +2106,7 @@ class Gameplay:
         self.boss = Boss(
             self.width,
             self.height,
+            self.stage,
         )
         self.boss_spawned = True
         self.boss_defeated = False
@@ -1979,26 +2199,104 @@ class Gameplay:
             self.boss.is_defeated()
             and not self.boss_defeated
         ):
-            self.boss_defeated = True
-            self.victory = True
-            self.stop_boss_music()
-            self.score += 10000
-            self.combo += 10
-            self.combo_timer = 600
-            self._update_multiplier()
+            self._complete_stage()
 
-            if not self.victory_score_saved:
-                # Victory folosește același scor total afișat pe HUD.
-                self.result_previous_best = max(
-                    0,
-                    int(self.get_best_score()),
-                )
-                self.result_is_new_record = (
-                    self.score > self.result_previous_best
-                )
-                self.save_score(self.score)
-                self.victory_score_saved = True
-                self.result_animation_timer = 0
+    # Multiplicatorul de scor crește cu 0.5 pentru fiecare stage terminat.
+    def _get_stage_score_multiplier(self):
+        return 1.0 + max(0, self.stage - 1) * 0.5
+
+    # Toate recompensele trec prin aceeași regulă, astfel încât x1.5 din
+    # Stage 2 se aplică și evenimentelor, nu numai inamicilor standard.
+    def _award_score(self, base_points, apply_combo=False):
+        score_amount = (
+            float(base_points)
+            * self._get_stage_score_multiplier()
+        )
+        if apply_combo:
+            score_amount *= self.multiplier
+
+        awarded_score = max(0, int(round(score_amount)))
+        self.score += awarded_score
+        return awarded_score
+
+    # Stage-urile mai adânci schimbă atmosfera fără să necesite încă un asset.
+    def _apply_stage_background_tint(self):
+        tint_palette = (
+            (8, 3, 15, 105),
+            (30, 2, 45, 118),
+            (42, 3, 25, 122),
+            (5, 22, 42, 120),
+        )
+        tint_color = tint_palette[
+            (max(1, self.stage) - 1) % len(tint_palette)
+        ]
+        self.background_tint.fill(tint_color)
+
+    # Evenimentele folosesc un wave virtual mai mare în stage-urile avansate.
+    # HUD-ul continuă să afișeze wave-ul real din stage-ul curent.
+    def _get_stage_difficulty_wave(self):
+        return self.wave + max(0, self.stage - 1) * 4
+
+    # Înlocuiește vechiul Victory cu o trecere cinematică spre următorul stage.
+    def _complete_stage(self):
+        self.boss_defeated = True
+        self.completed_stage = self.stage
+        self.stop_boss_music()
+
+        self.last_stage_bonus = self._award_score(10000)
+        self.combo += 10
+        self.combo_timer = 600
+        self._update_multiplier()
+        self.stage_transition_timer = (
+            self.stage_transition_duration
+        )
+        self.boss_projectiles.clear()
+        self.enemy_bullets.clear()
+        self.crossfire_bullets.clear()
+        self.homing_missiles.clear()
+        self._trigger_screen_shake(12, 28)
+
+    # Curăță toate obiectele temporare înaintea unui nou ciclu de evenimente.
+    def _clear_stage_hazards(self):
+        self.bullets.clear()
+        self.enemy_bullets.clear()
+        self.enemies.clear()
+        self.allied_ships.clear()
+        self.ally_bullets.clear()
+        self.combat_drones.clear()
+        self.storm_asteroids.clear()
+        self.crossfire_turrets.clear()
+        self.crossfire_bullets.clear()
+        self.homing_missiles.clear()
+        self.boss_projectiles.clear()
+        self.powerups.clear()
+        self.powerup_collect_effects.clear()
+
+    # Păstrează nava și progresul, dar reconstruiește arena pentru Stage 2+.
+    def _begin_next_stage(self):
+        self.stage = self.completed_stage + 1
+        self.wave = 1
+        self.enemies_killed = 0
+        self.wave_elapsed_timer = 0
+        self.wave_transition_timer = 0
+        self.enemy_spawn_timer = 0
+        self.first_formation_spawned = False
+        self.elite_waves_spawned.clear()
+        self.shield_carrier_waves_spawned.clear()
+        self.phase_hunter_waves_spawned.clear()
+
+        self._clear_stage_hazards()
+        self.boss = None
+        self.boss_spawned = False
+        self.boss_defeated = False
+        self.boss_phase_transition_timer = 0
+        self.boss_transition_phase = 1
+        self.crossfire_formation_deployed = False
+        self.crossfire_bonus_awarded = False
+        self.last_audio_event = None
+        self.space_event_manager.reset(self.stage)
+        self._apply_stage_background_tint()
+        self._spawn_first_wave_formation()
 
     def _move_objects(self):
         for bullet in self.bullets:
@@ -2286,7 +2584,10 @@ class Gameplay:
         self.combo += 3
         self.combo_timer = 240
         self._update_multiplier()
-        self.score += 300 * self.multiplier
+        self._award_score(
+            300,
+            apply_combo=True,
+        )
         self._charge_energy_pulse(4)
 
         if turret in self.crossfire_turrets:
@@ -2378,8 +2679,9 @@ class Gameplay:
         self.combo += 1
         self.combo_timer = 160
         self._update_multiplier()
-        self.score += (
-            asteroid.points * self.multiplier
+        self._award_score(
+            asteroid.points,
+            apply_combo=True,
         )
         self._charge_energy_pulse(1)
 
@@ -2467,8 +2769,9 @@ class Gameplay:
         self.combo += 1
         self.combo_timer = 150
         self._update_multiplier()
-        self.score += (
-            drone.points * self.multiplier
+        self._award_score(
+            drone.points,
+            apply_combo=True,
         )
         self._charge_energy_pulse(2)
 
@@ -2479,10 +2782,28 @@ class Gameplay:
     def _ally_bullet_enemy_collisions(self):
         for ally_bullet in self.ally_bullets[:]:
             for enemy in self.enemies[:]:
+                if not enemy.can_be_hit():
+                    continue
+
                 if not ally_bullet.rect.colliderect(
                     enemy.rect
                 ):
                     continue
+
+                protecting_carrier = (
+                    self._get_protecting_shield_carrier(
+                        enemy
+                    )
+                )
+                if protecting_carrier is not None:
+                    protecting_carrier.register_shield_hit(
+                        enemy.rect.center
+                    )
+                    if ally_bullet in self.ally_bullets:
+                        self.ally_bullets.remove(
+                            ally_bullet
+                        )
+                    break
 
                 enemy.take_damage()
 
@@ -2508,10 +2829,26 @@ class Gameplay:
     def _player_bullet_enemy_collisions(self):
         for bullet in self.bullets[:]:
             for enemy in self.enemies[:]:
+                if not enemy.can_be_hit():
+                    continue
+
                 if not bullet.rect.colliderect(
                     enemy.rect
                 ):
                     continue
+
+                protecting_carrier = (
+                    self._get_protecting_shield_carrier(
+                        enemy
+                    )
+                )
+                if protecting_carrier is not None:
+                    protecting_carrier.register_shield_hit(
+                        enemy.rect.center
+                    )
+                    if bullet in self.bullets:
+                        self.bullets.remove(bullet)
+                    break
 
                 for _ in range(bullet.damage):
                     enemy.take_damage()
@@ -2580,6 +2917,10 @@ class Gameplay:
             # Scout-ul rămâne rapid, fără să întrerupă vizual lupta.
             if enemy.enemy_type == "tank":
                 self._trigger_screen_shake(7, 12)
+            elif enemy.enemy_type == "shield_carrier":
+                self._trigger_screen_shake(11, 18)
+            elif enemy.enemy_type == "phase_hunter":
+                self._trigger_screen_shake(8, 14)
             elif enemy.enemy_type == "fighter":
                 self._trigger_screen_shake(3, 6)
 
@@ -2589,12 +2930,20 @@ class Gameplay:
         self.combo_timer = 180
         self._update_multiplier()
 
-        self.score += (
-            enemy.points
-            * self.multiplier
+        self._award_score(
+            enemy.points,
+            apply_combo=True,
         )
         self._charge_energy_pulse(
-            8 if enemy.enemy_type == "elite" else 2
+            (
+                8
+                if enemy.enemy_type == "elite"
+                else 5
+                if enemy.enemy_type == "shield_carrier"
+                else 4
+                if enemy.enemy_type == "phase_hunter"
+                else 2
+            )
         )
 
         # Elita este obiectivul special al wave-ului si nu inlocuieste unul
@@ -2610,7 +2959,11 @@ class Gameplay:
             enemy_center_y - 18,
         )
 
-        if enemy.enemy_type == "elite":
+        if enemy.enemy_type == "shield_carrier":
+            # Distrugerea tehnologiei defensive oferă jucătorului un scut.
+            powerup.powerup_type = "shield"
+
+        elif enemy.enemy_type == "elite":
             # Elita oferă garantat un power-up real. Dacă un upgrade de armă
             # a apărut recent, elita oferă scut sau viață ca să nu urcăm prea
             # repede toate cele patru niveluri ale armei.
@@ -2713,7 +3066,7 @@ class Gameplay:
             )
 
             if hit_result == "generator_destroyed":
-                self.score += 750
+                self._award_score(750)
                 self.combo += 3
                 self.combo_timer = 300
                 self._update_multiplier()
@@ -2750,7 +3103,7 @@ class Gameplay:
         self.boss.begin_destruction()
         self.boss_projectiles.clear()
         self.enemy_bullets.clear()
-        self.boss_count = 1
+        self.boss_count += 1
         # Vechiul sunet greu functioneaza mai bine ca impact al unei nave distruse.
         # Il redam mai rar, ca luptele aglomerate sa nu devina zgomotoase.
         if random.random() < 0.55:
@@ -2875,7 +3228,7 @@ class Gameplay:
                 upgraded = self.player.upgrade_weapon()
                 if not upgraded:
                     # La nivelul maxim, power-up-ul rămâne valoros prin scor.
-                    self.score += 750
+                    self._award_score(750)
 
             elif powerup.powerup_type == "shield":
                 self.player.activate_shield(300)
@@ -2884,7 +3237,7 @@ class Gameplay:
                 if self.lives < 5:
                     self.lives += 1
                 else:
-                    self.score += 500
+                    self._award_score(500)
 
             # Energia obiectului se strânge vizibil în navă la colectare.
             self.powerup_collect_effects.append(
@@ -2897,6 +3250,125 @@ class Gameplay:
 
             if powerup in self.powerups:
                 self.powerups.remove(powerup)
+
+    # Desenează câmpul comun și legăturile către navele protejate.
+    def _draw_enemy_shield_fields(self):
+        carriers = [
+            enemy
+            for enemy in self.enemies
+            if enemy.shield_is_active()
+        ]
+        if not carriers:
+            return
+
+        shield_layer = pygame.Surface(
+            (self.width, self.height),
+            pygame.SRCALPHA,
+        )
+        for carrier in carriers:
+            center = carrier.rect.center
+            radius = carrier.shield_radius
+            pulse = (
+                math.sin(
+                    self.background_timer * 0.055
+                    + carrier.wander_phase
+                )
+                + 1.0
+            ) / 2.0
+
+            pygame.draw.circle(
+                shield_layer,
+                (25, 175, 255, int(12 + pulse * 8)),
+                center,
+                radius,
+            )
+            pygame.draw.circle(
+                shield_layer,
+                (75, 225, 255, int(85 + pulse * 45)),
+                center,
+                radius,
+                2,
+            )
+            pygame.draw.circle(
+                shield_layer,
+                (185, 95, 255, int(45 + pulse * 30)),
+                center,
+                radius - 7,
+                1,
+            )
+
+            arc_rect = pygame.Rect(
+                center[0] - radius,
+                center[1] - radius,
+                radius * 2,
+                radius * 2,
+            )
+            rotation = self.background_timer * 0.018
+            for segment_index in range(8):
+                segment_start = (
+                    rotation
+                    + segment_index * math.tau / 8
+                )
+                pygame.draw.arc(
+                    shield_layer,
+                    (145, 240, 255, int(120 + pulse * 60)),
+                    arc_rect,
+                    segment_start,
+                    segment_start + 0.30,
+                    3,
+                )
+
+            for protected_enemy in self.enemies:
+                if (
+                    protected_enemy is carrier
+                    or protected_enemy.rect.bottom < 0
+                    or self._get_protecting_shield_carrier(
+                        protected_enemy
+                    )
+                    is not carrier
+                ):
+                    continue
+
+                pygame.draw.line(
+                    shield_layer,
+                    (80, 220, 255, 52),
+                    center,
+                    protected_enemy.rect.center,
+                    2,
+                )
+                target_radius = min(
+                    138,
+                    max(
+                        protected_enemy.rect.width,
+                        protected_enemy.rect.height,
+                    )
+                    // 2
+                    + 8,
+                )
+                pygame.draw.circle(
+                    shield_layer,
+                    (95, 230, 255, 105),
+                    protected_enemy.rect.center,
+                    target_radius,
+                    2,
+                )
+
+            if (
+                carrier.shield_hit_timer > 0
+                and carrier.shield_impact_position is not None
+            ):
+                impact_ratio = (
+                    carrier.shield_hit_timer / 14
+                )
+                pygame.draw.circle(
+                    shield_layer,
+                    (225, 255, 255, int(230 * impact_ratio)),
+                    carrier.shield_impact_position,
+                    int(18 + (1.0 - impact_ratio) * 34),
+                    4,
+                )
+
+        self.screen.blit(shield_layer, (0, 0))
 
     def draw(self):
         self._draw_dead_star_background()
@@ -2944,6 +3416,8 @@ class Gameplay:
 
         for crossfire_bullet in self.crossfire_bullets:
             crossfire_bullet.draw(self.screen)
+
+        self._draw_enemy_shield_fields()
 
         for enemy in self.enemies:
             enemy.draw(self.screen)
@@ -3012,6 +3486,7 @@ class Gameplay:
                 self.wave,
                 self.multiplier,
                 self.player,
+                self.stage,
             )
             self._draw_victory()
         elif not self.game_over:
@@ -3023,6 +3498,7 @@ class Gameplay:
                 self.wave,
                 self.multiplier,
                 self.player,
+                self.stage,
             )
 
             if self.battle_intro_timer > 0:
@@ -3033,6 +3509,9 @@ class Gameplay:
 
             if self.boss_phase_transition_timer > 0:
                 self._draw_boss_phase_transition()
+
+            if self.stage_transition_timer > 0:
+                self._draw_stage_transition()
         else:
             self._draw_game_over()
 
@@ -3363,6 +3842,140 @@ class Gameplay:
             ),
         )
 
+    # Prezintă căderea Sovereignului și accesul către următorul strat Dead Star.
+    def _draw_stage_transition(self):
+        elapsed = (
+            self.stage_transition_duration
+            - self.stage_transition_timer
+        )
+        next_stage = self.completed_stage + 1
+        fade_frames = 24
+        visibility = min(
+            1.0,
+            elapsed / fade_frames,
+            self.stage_transition_timer / fade_frames,
+        )
+
+        if elapsed < 82:
+            status = "SOVEREIGN DESTROYED"
+            title = "HOSTILE COMMAND SIGNAL COLLAPSED"
+            subtitle = f"STAGE {self.completed_stage:02d} CLEARED"
+            accent_color = (90, 220, 255)
+        elif elapsed < 168:
+            status = "UNKNOWN SIGNAL DETECTED"
+            title = "THE DEAD STAR CORE IS STILL ACTIVE"
+            subtitle = "NEW DEFENSE LAYERS ARE COMING ONLINE"
+            accent_color = (225, 85, 255)
+        else:
+            status = f"STAGE {next_stage:02d}  //  CORE BREACH"
+            title = "DEAD STAR CORE"
+            subtitle = (
+                "HOSTILE VELOCITY +25%  //  ATTACK RATE +35%"
+            )
+            accent_color = (255, 90, 170)
+
+        darkness = pygame.Surface(
+            (self.width, self.height),
+            pygame.SRCALPHA,
+        )
+        darkness.fill((2, 2, 14, int(205 * visibility)))
+        self.screen.blit(darkness, (0, 0))
+
+        pulse_radius = int(80 + min(1.0, elapsed / 160) * 520)
+        pulse = pygame.Surface(
+            (self.width, self.height),
+            pygame.SRCALPHA,
+        )
+        pygame.draw.circle(
+            pulse,
+            (*accent_color, int(100 * visibility)),
+            (self.width // 2, self.height // 2),
+            pulse_radius,
+            4,
+        )
+        self.screen.blit(pulse, (0, 0))
+
+        panel_width = min(880, self.width - 100)
+        panel_rect = pygame.Rect(
+            self.width // 2 - panel_width // 2,
+            self.height // 2 - 112,
+            panel_width,
+            224,
+        )
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (6, 7, 25, int(235 * visibility)),
+            panel.get_rect(),
+            border_radius=18,
+        )
+        pygame.draw.rect(
+            panel,
+            (*accent_color, int(220 * visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=18,
+        )
+        pygame.draw.line(
+            panel,
+            (*accent_color, int(245 * visibility)),
+            (42, 3),
+            (panel_width - 42, 3),
+            4,
+        )
+        self.screen.blit(panel, panel_rect.topleft)
+
+        status_surface = self.ally_label_font.render(
+            status,
+            True,
+            accent_color,
+        )
+        title_surface = self.battle_title_font.render(
+            title,
+            True,
+            (242, 247, 255),
+        )
+        if title_surface.get_width() > panel_width - 60:
+            title_surface = self.battle_subtitle_font.render(
+                title,
+                True,
+                (242, 247, 255),
+            )
+        subtitle_surface = self.battle_subtitle_font.render(
+            subtitle,
+            True,
+            (190, 205, 230),
+        )
+        score_message = (
+            f"STAGE CLEAR BONUS  //  +{self.last_stage_bonus:,}"
+            if elapsed < 82
+            else (
+                f"NEXT STAGE SCORE MULTIPLIER  //  "
+                f"x{1.0 + max(0, next_stage - 1) * 0.5:.1f}"
+            )
+        )
+        score_surface = self.ally_label_font.render(
+            score_message,
+            True,
+            (255, 205, 100),
+        )
+
+        for text_surface, y_position in (
+            (status_surface, panel_rect.y + 28),
+            (title_surface, panel_rect.y + 61),
+            (subtitle_surface, panel_rect.y + 143),
+            (score_surface, panel_rect.y + 184),
+        ):
+            text_surface.set_alpha(int(255 * visibility))
+            self.screen.blit(
+                text_surface,
+                (
+                    self.width // 2
+                    - text_surface.get_width() // 2,
+                    y_position,
+                ),
+            )
+
     # Anunță noul wave fără să acopere arena mai mult de 1,2 secunde.
     def _draw_wave_transition(self):
         elapsed_frames = (
@@ -3400,13 +4013,15 @@ class Gameplay:
         )
 
         title_surface = self.battle_title_font.render(
-            f"WAVE {self.wave:02d}",
+            f"STAGE {self.stage:02d}  //  WAVE {self.wave:02d}",
             True,
             (225, 245, 255),
         )
         threat_tier = min(
             5,
-            1 + max(0, self.wave - 1) // 2,
+            1
+            + max(0, self.wave - 1) // 2
+            + max(0, self.stage - 1),
         )
         subtitle_surface = self.battle_subtitle_font.render(
             f"THREAT LEVEL {threat_tier}  //  ELITE INBOUND",
@@ -3836,7 +4451,10 @@ class Gameplay:
         report_note = (
             "SOVEREIGN ELIMINATION BONUS  //  +10 000"
             if victory
-            else f"COMBAT LINK LOST  //  WAVE {self.wave:02d}"
+            else (
+                f"COMBAT LINK LOST  //  STAGE {self.stage:02d}  "
+                f"//  WAVE {self.wave:02d}"
+            )
         )
         if self.result_is_new_record:
             report_note = "NEW GALACTIC RECORD  //  PILOT ARCHIVE UPDATED"
@@ -3868,10 +4486,14 @@ class Gameplay:
         )
         displayed_score = int(self.score * count_progress)
         displayed_wave = max(1, int(self.wave * count_progress))
+        displayed_stage = max(1, int(self.stage * count_progress))
         displayed_best = int(best_score * count_progress)
         statistics = (
             ("FINAL COMBAT SCORE", self._format_result_number(displayed_score)),
-            ("HOSTILE WAVE REACHED", f"{displayed_wave:02d}"),
+            (
+                "STAGE / HOSTILE WAVE",
+                f"{displayed_stage:02d} / {displayed_wave:02d}",
+            ),
             ("GALACTIC BEST SCORE", self._format_result_number(displayed_best)),
         )
         for card_index, (label, value) in enumerate(statistics):

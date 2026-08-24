@@ -34,6 +34,14 @@ class EnemyBullet:
             self.width = 14
             self.height = 20
             self.maximum_trail_points = 11
+        elif bullet_type == "shield":
+            self.width = 14
+            self.height = 18
+            self.maximum_trail_points = 12
+        elif bullet_type == "phase":
+            self.width = 16
+            self.height = 24
+            self.maximum_trail_points = 14
         else:
             self.width = 6
             self.height = 14
@@ -114,6 +122,10 @@ class EnemyBullet:
             self._draw_aimed(screen, center, direction, perpendicular)
         elif self.bullet_type == "elite":
             self._draw_elite(screen, center, direction, perpendicular)
+        elif self.bullet_type == "shield":
+            self._draw_shield(screen, center, direction, perpendicular)
+        elif self.bullet_type == "phase":
+            self._draw_phase(screen, center, direction, perpendicular)
         else:
             self._draw_standard(screen, center, direction, perpendicular)
 
@@ -230,6 +242,119 @@ class EnemyBullet:
             2,
         )
         pygame.draw.circle(screen, (255, 250, 255), center, 3)
+
+    # Shield Carrier: nucleu cyan înconjurat de două inele defensive.
+    def _draw_shield(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (45, 225, 255), 7)
+        pulse = (
+            math.sin(self.animation_timer * 0.32) + 1.0
+        ) / 2.0
+        tail = self._oriented_point(
+            center,
+            direction,
+            perpendicular,
+            -14,
+        )
+        pygame.draw.line(
+            screen,
+            (5, 55, 90),
+            tail,
+            center,
+            10,
+        )
+        pygame.draw.circle(
+            screen,
+            (5, 45, 85),
+            center,
+            11 + int(pulse * 2),
+        )
+        pygame.draw.circle(
+            screen,
+            (30, 190, 235),
+            center,
+            8,
+        )
+        pygame.draw.circle(
+            screen,
+            (220, 255, 255),
+            center,
+            3,
+        )
+        ring_radius = 13 + int(pulse * 2)
+        pygame.draw.circle(
+            screen,
+            (105, 235, 255),
+            center,
+            ring_radius,
+            2,
+        )
+        pygame.draw.arc(
+            screen,
+            (205, 105, 255),
+            (
+                center[0] - ring_radius - 3,
+                center[1] - ring_radius - 3,
+                (ring_radius + 3) * 2,
+                (ring_radius + 3) * 2,
+            ),
+            self.animation_timer * 0.16,
+            self.animation_timer * 0.16 + 2.4,
+            2,
+        )
+
+    # Phase Hunter: lance magenta cu miez cyan și ecou spectral dublu.
+    def _draw_phase(self, screen, center, direction, perpendicular):
+        self._draw_trail(screen, (255, 35, 205), 8)
+        tip = self._oriented_point(center, direction, perpendicular, 18)
+        tail = self._oriented_point(center, direction, perpendicular, -16)
+        left = self._oriented_point(center, direction, perpendicular, -2, 9)
+        right = self._oriented_point(center, direction, perpendicular, -2, -9)
+
+        for side_offset in (-8, 8):
+            echo_start = self._oriented_point(
+                center,
+                direction,
+                perpendicular,
+                -15,
+                side_offset,
+            )
+            echo_end = self._oriented_point(
+                center,
+                direction,
+                perpendicular,
+                7,
+                side_offset * 0.35,
+            )
+            pygame.draw.line(
+                screen,
+                (25, 110, 125),
+                echo_start,
+                echo_end,
+                3,
+            )
+
+        pygame.draw.line(screen, (55, 4, 65), tail, tip, 17)
+        pygame.draw.polygon(
+            screen,
+            (205, 25, 170),
+            [tip, left, tail, right],
+        )
+        inner_left = self._oriented_point(
+            center, direction, perpendicular, 0, 4
+        )
+        inner_right = self._oriented_point(
+            center, direction, perpendicular, 0, -4
+        )
+        inner_tail = self._oriented_point(
+            center, direction, perpendicular, -10
+        )
+        pygame.draw.polygon(
+            screen,
+            (55, 235, 225),
+            [tip, inner_left, inner_tail, inner_right],
+        )
+        pygame.draw.line(screen, (245, 255, 255), center, tip, 2)
+        pygame.draw.circle(screen, (255, 235, 255), center, 3)
 
     # Dronă: bolt chihlimbariu compact, orientat spre jucător la lansare.
     def _draw_standard(self, screen, center, direction, perpendicular):

@@ -70,6 +70,12 @@ MISSILE_SALVO_DURATION = 300
 MISSILE_LOCK_DURATION = 75
 MISSILE_TOTAL_SALVOS = 3
 
+# Duratele furtunii dimensionale disponibile din Stage 2.
+PHASE_STORM_WARNING_DURATION = 150
+PHASE_STORM_RECOVERY_DURATION = 120
+PHASE_PORTAL_WARNING_DURATION = 58
+PHASE_PORTAL_LINGER_DURATION = 28
+
 
 # Controlează furtuna solară produsă de steaua moartă.
 class SolarStormEvent:
@@ -3831,6 +3837,369 @@ class MissileBarrageEvent:
         )
 
 
+# Furtuna dimensională trimite salve prin portaluri cu traiectorii anunțate.
+class PhaseStormEvent:
+
+    def __init__(self, screen_width, screen_height):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.title_font = pygame.font.Font(None, 50)
+        self.small_font = pygame.font.Font(None, 27)
+        self.reset()
+
+    def reset(self):
+        self.state = "idle"
+        self.warning_timer = 0
+        self.active_timer = 0
+        self.recovery_timer = 0
+        self.animation_timer = 0
+        self.difficulty_wave = 1
+        self.volley_count = 0
+        self.total_volleys = 5
+        self.volley_interval = 140
+        self.volley_timer = 0
+        self.portal_count = 3
+        self.portals = []
+        self.projectiles = []
+
+    def start(self, wave):
+        self.state = "warning"
+        self.warning_timer = PHASE_STORM_WARNING_DURATION
+        self.animation_timer = 0
+        self.difficulty_wave = max(1, int(wave))
+        self.total_volleys = 5 + min(
+            2,
+            max(0, self.difficulty_wave - 1) // 7,
+        )
+        self.portal_count = 3 + min(
+            2,
+            max(0, self.difficulty_wave - 1) // 6,
+        )
+        self.volley_interval = max(
+            105,
+            150 - max(0, self.difficulty_wave - 1) * 3,
+        )
+        self.volley_count = 0
+        self.portals = []
+        self.projectiles = []
+
+    def update(self, player_hitbox, wave):
+        del wave
+        self.animation_timer += 1
+
+        if self.state in ("idle", "finished"):
+            return False
+
+        if self.state == "warning":
+            self.warning_timer -= 1
+            if self.warning_timer <= 0:
+                self.state = "active"
+                self.active_timer = (
+                    self.total_volleys * self.volley_interval + 180
+                )
+                self.volley_timer = self.volley_interval
+                self._prepare_volley(player_hitbox)
+            return False
+
+        if self.state == "active":
+            self.active_timer -= 1
+            self.volley_timer -= 1
+
+            if (
+                self.volley_timer <= 0
+                and self.volley_count < self.total_volleys
+            ):
+                self._prepare_volley(player_hitbox)
+                self.volley_timer = self.volley_interval
+
+            self._update_portals()
+            player_was_hit = self._update_projectiles(player_hitbox)
+
+            attacks_are_finished = (
+                self.volley_count >= self.total_volleys
+                and not self.portals
+                and not self.projectiles
+            )
+            if self.active_timer <= 0 or attacks_are_finished:
+                self.state = "recovery"
+                self.recovery_timer = PHASE_STORM_RECOVERY_DURATION
+                self.portals = []
+                self.projectiles = []
+
+            return player_was_hit
+
+        if self.state == "recovery":
+            self.recovery_timer -= 1
+            if self.recovery_timer <= 0:
+                self.state = "finished"
+
+        return False
+
+    # Portalurile blochează direcția atacului la începutul avertizării.
+    def _prepare_volley(self, player_hitbox):
+        self.volley_count += 1
+        target_x, target_y = player_hitbox.center
+        side_order = ["top", "left", "right", "top", "right"]
+
+        for portal_index in range(self.portal_count):
+            side = side_order[
+                (portal_index + self.volley_count) % len(side_order)
+            ]
+            if side == "top":
+                portal_x = random.randint(145, self.screen_width - 145)
+                portal_y = 68
+            elif side == "left":
+                portal_x = 55
+                portal_y = random.randint(145, self.screen_height - 155)
+            else:
+                portal_x = self.screen_width - 55
+                portal_y = random.randint(145, self.screen_height - 155)
+
+            base_angle = math.atan2(
+                target_y - portal_y,
+                target_x - portal_x,
+            )
+            spread_offset = (
+                portal_index - (self.portal_count - 1) / 2
+            ) * 0.045
+            aim_angle = base_angle + spread_offset
+            self.portals.append(
+                {
+                    "x": float(portal_x),
+                    "y": float(portal_y),
+                    "angle": aim_angle,
+                    "warning_timer": PHASE_PORTAL_WARNING_DURATION,
+                    "linger_timer": PHASE_PORTAL_LINGER_DURATION,
+                    "fired": False,
+                }
+            )
+
+    def _update_portals(self):
+        for portal in self.portals[:]:
+            if portal["warning_timer"] > 0:
+                portal["warning_timer"] -= 1
+                continue
+
+            if not portal["fired"]:
+                portal["fired"] = True
+                projectile_speed = min(
+                    7.6,
+                    5.0 + self.difficulty_wave * 0.12,
+                )
+                self.projectiles.append(
+                    {
+                        "x": portal["x"],
+                        "y": portal["y"],
+                        "dx": math.cos(portal["angle"])
+                        * projectile_speed,
+                        "dy": math.sin(portal["angle"])
+                        * projectile_speed,
+                        "radius": 10,
+                        "trail": [],
+                    }
+                )
+                continue
+
+            portal["linger_timer"] -= 1
+            if portal["linger_timer"] <= 0:
+                self.portals.remove(portal)
+
+    def _update_projectiles(self, player_hitbox):
+        player_was_hit = False
+        for projectile in self.projectiles[:]:
+            projectile["trail"].append(
+                (int(projectile["x"]), int(projectile["y"]))
+            )
+            if len(projectile["trail"]) > 12:
+                projectile["trail"].pop(0)
+
+            projectile["x"] += projectile["dx"]
+            projectile["y"] += projectile["dy"]
+            radius = projectile["radius"]
+            projectile_rect = pygame.Rect(
+                int(projectile["x"] - radius),
+                int(projectile["y"] - radius),
+                radius * 2,
+                radius * 2,
+            )
+
+            if projectile_rect.colliderect(player_hitbox):
+                self.projectiles.remove(projectile)
+                player_was_hit = True
+                continue
+
+            if (
+                projectile_rect.right < -40
+                or projectile_rect.left > self.screen_width + 40
+                or projectile_rect.bottom < -40
+                or projectile_rect.top > self.screen_height + 40
+            ):
+                self.projectiles.remove(projectile)
+
+        return player_was_hit
+
+    def draw(self, screen):
+        if self.state in ("idle", "finished"):
+            return
+
+        phase_layer = pygame.Surface(
+            (self.screen_width, self.screen_height),
+            pygame.SRCALPHA,
+        )
+        pulse = (math.sin(self.animation_timer * 0.11) + 1.0) / 2.0
+        phase_layer.fill((35, 0, 55, int(12 + pulse * 13)))
+
+        for portal in self.portals:
+            self._draw_portal(phase_layer, portal, pulse)
+
+        for projectile in self.projectiles:
+            self._draw_projectile(phase_layer, projectile)
+
+        screen.blit(phase_layer, (0, 0))
+
+        if self.state == "warning":
+            seconds_remaining = max(1, (self.warning_timer + 59) // 60)
+            self._draw_status_banner(
+                screen,
+                "PHASE STORM DETECTED",
+                f"DIMENSIONAL BREACH IN {seconds_remaining}",
+                (255, 65, 210),
+            )
+        elif self.state == "active":
+            self._draw_status_banner(
+                screen,
+                "PHASE STORM",
+                (
+                    f"RIFT WAVE {self.volley_count}/{self.total_volleys}"
+                    "  //  KEEP MOVING"
+                ),
+                (75, 235, 225),
+            )
+        else:
+            self._draw_status_banner(
+                screen,
+                "STORM COLLAPSED",
+                "SURVIVAL BONUS ACQUIRED",
+                (120, 255, 220),
+            )
+
+    def _draw_portal(self, surface, portal, pulse):
+        center = (int(portal["x"]), int(portal["y"]))
+        warning_progress = 1.0 - max(
+            0,
+            portal["warning_timer"],
+        ) / PHASE_PORTAL_WARNING_DURATION
+        radius = int(42 + pulse * 7 - warning_progress * 5)
+        rotation = self.animation_timer * 0.13
+
+        pygame.draw.circle(
+            surface,
+            (8, 2, 20, 205),
+            center,
+            max(14, radius - 8),
+        )
+        for segment in range(6):
+            start_angle = rotation + segment * math.tau / 6
+            arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+            arc_rect.center = center
+            pygame.draw.arc(
+                surface,
+                (255, 55, 210, 225),
+                arc_rect,
+                start_angle,
+                start_angle + 0.52,
+                4,
+            )
+
+        pygame.draw.circle(
+            surface,
+            (65, 235, 225, 190),
+            center,
+            max(12, radius - 16),
+            3,
+        )
+
+        if portal["warning_timer"] > 0:
+            beam_length = max(self.screen_width, self.screen_height) * 2
+            beam_end = (
+                int(portal["x"] + math.cos(portal["angle"]) * beam_length),
+                int(portal["y"] + math.sin(portal["angle"]) * beam_length),
+            )
+            beam_alpha = int(55 + warning_progress * 145)
+            pygame.draw.line(
+                surface,
+                (255, 65, 210, beam_alpha),
+                center,
+                beam_end,
+                3,
+            )
+            pygame.draw.line(
+                surface,
+                (95, 245, 235, min(220, beam_alpha + 30)),
+                center,
+                beam_end,
+                1,
+            )
+
+    @staticmethod
+    def _draw_projectile(surface, projectile):
+        trail = projectile["trail"]
+        for trail_index in range(1, len(trail)):
+            progress = trail_index / len(trail)
+            pygame.draw.line(
+                surface,
+                (255, 45, 205, int(120 * progress)),
+                trail[trail_index - 1],
+                trail[trail_index],
+                max(1, int(7 * progress)),
+            )
+
+        center = (int(projectile["x"]), int(projectile["y"]))
+        pygame.draw.circle(surface, (40, 4, 65, 220), center, 15)
+        pygame.draw.circle(surface, (255, 45, 205, 245), center, 10)
+        pygame.draw.circle(surface, (65, 240, 225, 255), center, 6)
+        pygame.draw.circle(surface, (245, 255, 255, 255), center, 2)
+
+    def _draw_status_banner(self, screen, title, subtitle, accent_color):
+        banner_width = 590
+        banner_height = 76
+        banner = pygame.Surface(
+            (banner_width, banner_height),
+            pygame.SRCALPHA,
+        )
+        pygame.draw.rect(
+            banner,
+            (5, 8, 28, 218),
+            (0, 0, banner_width, banner_height),
+            border_radius=10,
+        )
+        pygame.draw.rect(
+            banner,
+            (*accent_color, 235),
+            (0, 0, banner_width, banner_height),
+            2,
+            border_radius=10,
+        )
+        title_surface = self.title_font.render(title, True, accent_color)
+        subtitle_surface = self.small_font.render(
+            subtitle,
+            True,
+            (215, 235, 250),
+        )
+        banner.blit(
+            title_surface,
+            (banner_width // 2 - title_surface.get_width() // 2, 7),
+        )
+        banner.blit(
+            subtitle_surface,
+            (banner_width // 2 - subtitle_surface.get_width() // 2, 48),
+        )
+        screen.blit(
+            banner,
+            (self.screen_width // 2 - banner_width // 2, 20),
+        )
+
+
 # Managerul oferă gameplay-ului un singur punct de acces la evenimente.
 class SpaceEventManager:
 
@@ -3881,8 +4250,13 @@ class SpaceEventManager:
             screen_height,
         )
 
+        self.phase_storm = PhaseStormEvent(
+            screen_width,
+            screen_height,
+        )
+
         # Lista permite adaugarea usoara a altor evenimente mai tarziu.
-        self.events = [
+        self.base_events = [
             self.solar_storm,
             self.gravity_wave,
             self.reinforcements,
@@ -3893,20 +4267,53 @@ class SpaceEventManager:
             self.crossfire_protocol,
             self.missile_barrage,
         ]
+        self.all_events = self.base_events + [self.phase_storm]
+        self.events = list(self.base_events)
 
         self.reset()
 
     # Resetează toate evenimentele când începe o rundă nouă.
-    def reset(self):
-        for event in self.events:
+    def reset(self, stage=1):
+        self.stage = max(1, int(stage))
+        self.events = list(self.base_events)
+        if self.stage >= 2:
+            self.events.append(self.phase_storm)
+        # Primul stage păstrează prezentarea construită manual. Din Stage 2,
+        # pericolele vin într-o ordine imprevizibilă pentru modul endless.
+        if self.stage >= 2:
+            random.shuffle(self.events)
+
+        for event in self.all_events:
             event.reset()
 
         self.current_event = None
         self.next_event_index = 0
-        self.event_cooldown = INITIAL_EVENT_DELAY
-        # Devine True numai dupa terminarea celui de-al noualea eveniment.
-        # Gameplay-ul foloseste semnalul pentru a porni bossul final.
+        self.event_cooldown = self._scaled_cooldown(
+            INITIAL_EVENT_DELAY,
+            rate_per_stage=0.20,
+            minimum=360,
+        )
+        # Devine True după terminarea întregii rotații a stage-ului curent.
+        # Gameplay-ul folosește semnalul pentru a porni bossul final.
         self.all_events_completed = False
+        self.phase_storm_reward_pending = 0
+
+    # Pauzele scad gradual, dar nu dispar complet în stage-urile foarte mari.
+    def _scaled_cooldown(
+        self,
+        base_duration,
+        rate_per_stage,
+        minimum,
+    ):
+        speed_multiplier = (
+            1.0
+            + max(0, self.stage - 1)
+            * rate_per_stage
+        )
+        return max(
+            minimum,
+            int(base_duration / speed_multiplier),
+        )
 
     # Actualizează evenimentul activ și returnează impactul produs.
     def update(
@@ -3943,6 +4350,10 @@ class SpaceEventManager:
 
         # Evenimentul terminat este resetat, apoi incepe o pauza.
         if self.current_event.state == "finished":
+            if self.current_event is self.phase_storm:
+                self.phase_storm_reward_pending = (
+                    1000 + self.stage * 250
+                )
             finished_final_event = (
                 self.current_event is self.events[-1]
             )
@@ -3953,7 +4364,11 @@ class SpaceEventManager:
                 self.all_events_completed = True
                 self.event_cooldown = 0
             else:
-                self.event_cooldown = EVENT_COOLDOWN
+                self.event_cooldown = self._scaled_cooldown(
+                    EVENT_COOLDOWN,
+                    rate_per_stage=0.25,
+                    minimum=480,
+                )
 
         return player_was_hit
 
@@ -3984,6 +4399,8 @@ class SpaceEventManager:
             self.crossfire_protocol.start()
         elif self.current_event is self.missile_barrage:
             self.missile_barrage.start(wave)
+        elif self.current_event is self.phase_storm:
+            self.phase_storm.start(wave)
         else:
             self.solar_storm.start()
 
@@ -3996,7 +4413,7 @@ class SpaceEventManager:
     def event_is_running(self):
         return self.current_event is not None
 
-    # Anunta gameplay-ul ca toate cele noua challenge-uri s-au terminat.
+    # Anunță gameplay-ul că toate challenge-urile rotației s-au terminat.
     def final_boss_is_ready(self):
         return (
             self.all_events_completed
@@ -4012,7 +4429,13 @@ class SpaceEventManager:
             self.asteroid_storm,
             self.crossfire_protocol,
             self.missile_barrage,
+            self.phase_storm,
         )
+
+    def consume_phase_storm_reward(self):
+        reward = self.phase_storm_reward_pending
+        self.phase_storm_reward_pending = 0
+        return reward
 
     # Ajuta gameplay-ul sa reduca, nu sa opreasca, lupta in Gravity Wave.
     def gravity_wave_is_running(self):

@@ -27,6 +27,10 @@ class Explosion:
             self._create_scout_explosion()
         elif self.effect_type == "fighter":
             self._create_fighter_explosion()
+        elif self.effect_type == "shield_carrier":
+            self._create_shield_carrier_explosion()
+        elif self.effect_type == "phase_hunter":
+            self._create_phase_hunter_explosion()
         elif self.effect_type == "tank":
             self._create_tank_explosion()
         elif self.effect_type == "asteroid":
@@ -92,6 +96,72 @@ class Explosion:
         self._add_fragments(
             self.x, self.y, 11, (75, 150, 255),
             (2.8, 6.7), (28, 44),
+        )
+
+    # Shield Carrier: câmpul cyan se prăbușește în trei unde concentrice.
+    def _create_shield_carrier_explosion(self):
+        colors = [
+            (245, 255, 255),
+            (75, 235, 255),
+            (35, 145, 245),
+            (175, 55, 235),
+        ]
+        self._add_flash(
+            self.x,
+            self.y,
+            (85, 225, 255),
+            62,
+            13,
+        )
+        self._add_shockwave(
+            self.x, self.y, (95, 235, 255),
+            14, 4.8, 34, 5,
+        )
+        self._add_shockwave(
+            self.x, self.y, (70, 150, 255),
+            8, 3.5, 42, 3,
+        )
+        self._add_shockwave(
+            self.x, self.y, (195, 75, 255),
+            4, 2.5, 50, 2,
+        )
+        self._add_particles(
+            self.x, self.y, 70, colors,
+            (2.0, 7.5), (3, 9), (34, 62),
+            drag=0.964,
+        )
+        self._add_fragments(
+            self.x, self.y, 18, (65, 175, 215),
+            (2.6, 7.2), (36, 60),
+        )
+
+    # Phase Hunter: o implozie magenta urmată de două rupturi cyan rapide.
+    def _create_phase_hunter_explosion(self):
+        colors = [
+            (255, 245, 255),
+            (255, 55, 205),
+            (145, 35, 210),
+            (55, 235, 225),
+        ]
+        self._add_flash(
+            self.x, self.y, (245, 55, 205), 48, 11,
+        )
+        self._add_shockwave(
+            self.x, self.y, (255, 55, 210),
+            40, -1.15, 22, 4,
+        )
+        self._add_shockwave(
+            self.x, self.y, (55, 235, 225),
+            8, 4.2, 30, 3,
+        )
+        self._add_particles(
+            self.x, self.y, 58, colors,
+            (2.8, 8.2), (2, 7), (24, 46),
+            drag=0.956,
+        )
+        self._add_fragments(
+            self.x, self.y, 12, (215, 45, 190),
+            (3.5, 8.0), (24, 43),
         )
 
     # Tank: detonare verde grea, urmată de două explozii secundare.
@@ -754,13 +824,14 @@ class Explosion:
                     max(1, int(3 * fade)),
                 )
 
-        elif self.effect_type in ("crossfire", "elite"):
+        elif self.effect_type in ("crossfire", "elite", "phase_hunter"):
             # Segmentele violete se rotesc în sensuri opuse.
-            base_color = (
-                (255, 75, 205)
-                if self.effect_type == "crossfire"
-                else (190, 80, 255)
-            )
+            if self.effect_type == "phase_hunter":
+                base_color = (55, 235, 225)
+            elif self.effect_type == "crossfire":
+                base_color = (255, 75, 205)
+            else:
+                base_color = (190, 80, 255)
             radius = max(3, int((18 + self.age * 3.4) * self.scale))
             arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
             arc_rect.center = position
