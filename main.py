@@ -96,6 +96,8 @@ class GalaxyDefender:
         self.archive_score_font = pygame.font.Font(None, 43)
         self.archive_rank_font = pygame.font.Font(None, 29)
         self.archive_row_font = pygame.font.Font(None, 23)
+        self.pause_value_font = pygame.font.Font(None, 36)
+        self.pause_button_font = pygame.font.Font(None, 27)
         self.title_font = pygame.font.Font(
             None,
             100,
@@ -294,6 +296,8 @@ class GalaxyDefender:
         self.confirm_new_game_animation_duration = 36
         self.leaderboard_animation_timer = 0
         self.leaderboard_animation_duration = 64
+        self.pause_animation_timer = 0
+        self.pause_animation_duration = 48
 
         self._create_buttons()
 
@@ -442,22 +446,22 @@ class GalaxyDefender:
         )
 
         self.resume_button = pygame.Rect(
-            500,
-            280,
-            280,
-            60,
+            690,
+            310,
+            325,
+            62,
         )
         self.pause_settings_button = pygame.Rect(
-            500,
-            370,
-            280,
-            60,
+            690,
+            390,
+            325,
+            62,
         )
         self.pause_menu_button = pygame.Rect(
-            500,
-            460,
-            280,
-            60,
+            690,
+            470,
+            325,
+            62,
         )
 
         self.music_minus_button = pygame.Rect(
@@ -1404,6 +1408,12 @@ class GalaxyDefender:
                 self.leaderboard_animation_timer + 1,
             )
 
+        elif current_scene == SceneManager.PAUSE:
+            self.pause_animation_timer = min(
+                self.pause_animation_duration,
+                self.pause_animation_timer + 1,
+            )
+
         elif current_scene == SceneManager.PLANET:
             planet_action = (
                 self.planet_scene.update(delta_time)
@@ -1473,6 +1483,9 @@ class GalaxyDefender:
 
         if current_scene != SceneManager.LEADERBOARD:
             self.leaderboard_animation_timer = 0
+
+        if current_scene != SceneManager.PAUSE:
+            self.pause_animation_timer = 0
 
         # Scenele se pot schimba in timpul update-ului; muzica se sincronizeaza dupa.
         self._sync_scene_music()
@@ -3070,87 +3083,541 @@ class GalaxyDefender:
         )
         self.screen.blit(panel, panel_rect.topleft)
 
-    # Desenează ecranul de pauză peste cadrul înghețat al luptei.
+    # Desenează o valoare importantă din telemetria rundei curente.
+    def _draw_pause_stat_card(
+        self,
+        card_rect,
+        label,
+        value,
+        accent_color,
+        visibility,
+    ):
+        card = pygame.Surface(card_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            card,
+            (7, 18, 39, int(215 * visibility)),
+            card.get_rect(),
+            border_radius=9,
+        )
+        pygame.draw.rect(
+            card,
+            (*accent_color, int(125 * visibility)),
+            card.get_rect(),
+            1,
+            border_radius=9,
+        )
+        label_surface = self.menu_micro_font.render(
+            label,
+            True,
+            (95, 122, 155),
+        )
+        value_surface = self.pause_value_font.render(
+            value,
+            True,
+            (225, 243, 255),
+        )
+        if value_surface.get_width() > card_rect.width - 10:
+            value_surface = self.menu_subtitle_font.render(
+                value,
+                True,
+                (225, 243, 255),
+            )
+        label_surface.set_alpha(int(255 * visibility))
+        value_surface.set_alpha(int(255 * visibility))
+        card.blit(
+            label_surface,
+            (
+                card_rect.width // 2 - label_surface.get_width() // 2,
+                10,
+            ),
+        )
+        card.blit(
+            value_surface,
+            (
+                card_rect.width // 2 - value_surface.get_width() // 2,
+                27,
+            ),
+        )
+        self.screen.blit(card, card_rect.topleft)
+
+    # Desenează una dintre comenzile disponibile în timpul pauzei.
+    def _draw_pause_command_button(
+        self,
+        button_rect,
+        title,
+        subtitle,
+        action,
+        mouse_position,
+        visibility,
+    ):
+        hovered = button_rect.collidepoint(mouse_position)
+        accent_colors = {
+            "resume": (75, 220, 255),
+            "settings": (155, 115, 245),
+            "menu": (255, 112, 82),
+        }
+        accent = accent_colors[action]
+        fill = (
+            (*accent, int(112 * visibility))
+            if hovered
+            else (7, 18, 39, int(225 * visibility))
+        )
+
+        if hovered:
+            pulse = (
+                math.sin(pygame.time.get_ticks() * 0.008) + 1.0
+            ) / 2.0
+            glow = pygame.Surface(
+                (button_rect.width + 20, button_rect.height + 20),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                glow,
+                (*accent, int((28 + pulse * 22) * visibility)),
+                glow.get_rect(),
+                border_radius=16,
+            )
+            self.screen.blit(
+                glow,
+                (button_rect.x - 10, button_rect.y - 10),
+            )
+
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button,
+            fill,
+            button.get_rect(),
+            border_radius=10,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent, int((235 if hovered else 145) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=10,
+        )
+        pygame.draw.line(
+            button,
+            (*accent, int(240 * visibility)),
+            (1, 10),
+            (1, button_rect.height - 10),
+            4,
+        )
+
+        icon_rect = pygame.Rect(14, 13, 36, 36)
+        pygame.draw.rect(
+            button,
+            (5, 13, 29, int(190 * visibility)),
+            icon_rect,
+            border_radius=9,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent, int(145 * visibility)),
+            icon_rect,
+            1,
+            border_radius=9,
+        )
+        center_x, center_y = icon_rect.center
+        if action == "resume":
+            pygame.draw.polygon(
+                button,
+                accent,
+                (
+                    (center_x - 5, center_y - 8),
+                    (center_x + 8, center_y),
+                    (center_x - 5, center_y + 8),
+                ),
+            )
+        elif action == "settings":
+            pygame.draw.circle(button, accent, icon_rect.center, 8, 2)
+            pygame.draw.circle(button, accent, icon_rect.center, 3, 2)
+            for offset_x, offset_y in (
+                (0, -12),
+                (0, 12),
+                (-12, 0),
+                (12, 0),
+            ):
+                pygame.draw.line(
+                    button,
+                    accent,
+                    (
+                        center_x + int(offset_x * 0.62),
+                        center_y + int(offset_y * 0.62),
+                    ),
+                    (center_x + offset_x, center_y + offset_y),
+                    2,
+                )
+        else:
+            pygame.draw.polygon(
+                button,
+                accent,
+                (
+                    (center_x, center_y - 10),
+                    (center_x + 10, center_y + 8),
+                    (center_x - 10, center_y + 8),
+                ),
+                2,
+            )
+            pygame.draw.line(
+                button,
+                accent,
+                (center_x, center_y - 4),
+                (center_x, center_y + 3),
+                2,
+            )
+            pygame.draw.circle(
+                button,
+                accent,
+                (center_x, center_y + 6),
+                1,
+            )
+
+        title_surface = self.pause_button_font.render(
+            title,
+            True,
+            (242, 249, 255),
+        )
+        subtitle_surface = self.menu_micro_font.render(
+            subtitle,
+            True,
+            accent,
+        )
+        title_surface.set_alpha(int(255 * visibility))
+        subtitle_surface.set_alpha(int(255 * visibility))
+        button.blit(title_surface, (64, 8))
+        button.blit(subtitle_surface, (64, 37))
+        self.screen.blit(button, button_rect.topleft)
+
+    # Desenează centrul de comandă peste cadrul complet înghețat al luptei.
     def _draw_pause(self):
-        # Gameplay.draw doar desenează; nu actualizează pozițiile obiectelor.
-        # Astfel, lupta rămâne vizibilă și complet înghețată în spate.
+        # Gameplay.draw nu actualizează pozițiile, deci pericolele rămân înghețate.
         self.gameplay.draw()
 
-        dark_overlay = pygame.Surface(
+        entrance_visibility = min(
+            1.0,
+            self.pause_animation_timer / 24,
+        )
+        content_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.pause_animation_timer - 4) / 22,
+            ),
+        )
+        overlay = pygame.Surface(
             (self.width, self.height),
             pygame.SRCALPHA,
         )
-        dark_overlay.fill((1, 5, 18, 188))
-        self.screen.blit(dark_overlay, (0, 0))
+        overlay.fill((1, 4, 16, int(205 * entrance_visibility)))
+        scan_offset = self.pause_animation_timer * 3 % 44
+        for scan_y in range(int(scan_offset) - 44, self.height, 44):
+            pygame.draw.line(
+                overlay,
+                (65, 195, 255, int(10 * entrance_visibility)),
+                (0, scan_y),
+                (self.width, scan_y),
+                1,
+            )
+        self.screen.blit(overlay, (0, 0))
 
-        panel_rect = pygame.Rect(430, 92, 420, 535)
-        self._draw_glass_panel(panel_rect)
-
-        status = self.menu_label_font.render(
-            "MISSION STATUS  //  STANDBY",
-            True,
-            (85, 215, 255),
+        panel_rect = pygame.Rect(190, 92, 900, 535)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (4, 10, 27, int(242 * entrance_visibility)),
+            panel.get_rect(),
+            border_radius=20,
         )
-        title = self.title_font.render(
-            "PAUSED",
+        pygame.draw.rect(
+            panel,
+            (75, 205, 255, int(170 * entrance_visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=20,
+        )
+        pygame.draw.line(
+            panel,
+            (75, 215, 255, int(235 * entrance_visibility)),
+            (35, 1),
+            (panel_rect.width - 35, 1),
+            4,
+        )
+        self.screen.blit(panel, panel_rect.topleft)
+
+        status = self.menu_micro_font.render(
+            "GALACTIC DEFENSE COMMAND  //  LIVE COMBAT LINK",
             True,
-            (235, 246, 255),
+            (90, 205, 245),
+        )
+        title = self.menu_font.render(
+            "MISSION SUSPENDED",
+            True,
+            (240, 248, 255),
         )
         objective = self.menu_label_font.render(
-            "COMBAT SIMULATION SUSPENDED",
+            "TACTICAL SYSTEMS ARE FROZEN  //  HOSTILES ON STANDBY",
             True,
-            (145, 165, 195),
+            (135, 160, 192),
         )
+        for text_surface in (status, title, objective):
+            text_surface.set_alpha(int(255 * content_visibility))
         self.screen.blit(
             status,
-            (self.width // 2 - status.get_width() // 2, 122),
+            (
+                self.width // 2 - status.get_width() // 2,
+                panel_rect.y + 23,
+            ),
         )
         self.screen.blit(
             title,
-            (self.width // 2 - title.get_width() // 2, 157),
+            (
+                self.width // 2 - title.get_width() // 2,
+                panel_rect.y + 49,
+            ),
         )
         self.screen.blit(
             objective,
-            (self.width // 2 - objective.get_width() // 2, 242),
+            (
+                self.width // 2 - objective.get_width() // 2,
+                panel_rect.y + 105,
+            ),
         )
         pygame.draw.line(
             self.screen,
-            (75, 205, 255),
-            (500, 272),
-            (780, 272),
-            2,
+            (65, 180, 225),
+            (panel_rect.x + 38, panel_rect.y + 137),
+            (panel_rect.right - 38, panel_rect.y + 137),
+            1,
         )
 
-        buttons = [
-            (self.resume_button, "RESUME"),
+        telemetry_rect = pygame.Rect(225, 252, 390, 309)
+        command_rect = pygame.Rect(655, 252, 400, 309)
+        for content_rect, accent in (
+            (telemetry_rect, (70, 195, 240)),
+            (command_rect, (135, 100, 225)),
+        ):
+            content_panel = pygame.Surface(
+                content_rect.size,
+                pygame.SRCALPHA,
+            )
+            pygame.draw.rect(
+                content_panel,
+                (6, 16, 35, int(220 * content_visibility)),
+                content_panel.get_rect(),
+                border_radius=14,
+            )
+            pygame.draw.rect(
+                content_panel,
+                (*accent, int(115 * content_visibility)),
+                content_panel.get_rect(),
+                1,
+                border_radius=14,
+            )
+            self.screen.blit(content_panel, content_rect.topleft)
+
+        telemetry_header = self.menu_label_font.render(
+            "LIVE MISSION TELEMETRY",
+            True,
+            (100, 210, 250),
+        )
+        command_header = self.menu_label_font.render(
+            "COMMAND OPTIONS",
+            True,
+            (175, 145, 245),
+        )
+        telemetry_header.set_alpha(int(255 * content_visibility))
+        command_header.set_alpha(int(255 * content_visibility))
+        self.screen.blit(telemetry_header, (245, 271))
+        self.screen.blit(command_header, (680, 271))
+
+        count_progress = max(
+            0.0,
+            min(
+                1.0,
+                (self.pause_animation_timer - 6) / 26,
+            ),
+        )
+        count_progress = 1.0 - (1.0 - count_progress) ** 3
+        statistic_cards = (
             (
-                self.pause_settings_button,
-                "SETTINGS",
+                pygame.Rect(245, 305, 110, 66),
+                "SCORE",
+                self._format_menu_score(
+                    int(self.gameplay.score * count_progress)
+                ),
+                (75, 205, 255),
             ),
             (
-                self.pause_menu_button,
-                "MAIN MENU",
+                pygame.Rect(365, 305, 110, 66),
+                "WAVE",
+                f"{max(1, int(self.gameplay.wave * count_progress)):02d}",
+                (150, 115, 245),
             ),
-        ]
-
-        mouse_position = self._get_mouse_position()
-
-        for button_rect, button_text in buttons:
-            self._draw_button(
-                button_rect,
-                button_text,
-                mouse_position,
-                animated=True,
+            (
+                pygame.Rect(485, 305, 110, 66),
+                "HULL",
+                f"{max(0, int(self.gameplay.lives * count_progress)):03d}",
+                (80, 220, 180),
+            ),
+        )
+        for card_rect, label, value, accent in statistic_cards:
+            self._draw_pause_stat_card(
+                card_rect,
+                label,
+                value,
+                accent,
+                content_visibility,
             )
 
-        hint = self.menu_label_font.render(
+        player = self.gameplay.player
+        telemetry_rows = (
+            (
+                "WEAPON SYSTEM",
+                f"MK {player.weapon_level} / {player.maximum_weapon_level}",
+                (90, 205, 245),
+            ),
+            (
+                "SHIELD MATRIX",
+                "ONLINE" if player.shield else "STANDBY",
+                (80, 220, 180) if player.shield else (135, 155, 185),
+            ),
+            (
+                "COMBAT LINK",
+                f"X{self.gameplay.multiplier}",
+                (255, 190, 85),
+            ),
+        )
+        for row_index, (label, value, color) in enumerate(telemetry_rows):
+            row_y = 391 + row_index * 32
+            label_surface = self.menu_micro_font.render(
+                label,
+                True,
+                (100, 125, 156),
+            )
+            value_surface = self.menu_label_font.render(
+                value,
+                True,
+                color,
+            )
+            label_surface.set_alpha(int(255 * content_visibility))
+            value_surface.set_alpha(int(255 * content_visibility))
+            self.screen.blit(label_surface, (247, row_y + 4))
+            self.screen.blit(
+                value_surface,
+                (590 - value_surface.get_width(), row_y),
+            )
+            pygame.draw.line(
+                self.screen,
+                (34, 66, 95),
+                (245, row_y + 25),
+                (595, row_y + 25),
+                1,
+            )
+
+        energy_ratio = max(
+            0.0,
+            min(
+                1.0,
+                player.special_energy
+                / max(1, player.maximum_special_energy),
+            ),
+        )
+        energy_label = self.menu_micro_font.render(
+            "ENERGY PULSE CHARGE",
+            True,
+            (100, 125, 156),
+        )
+        energy_value = self.menu_label_font.render(
+            f"{int(energy_ratio * 100):03d}%",
+            True,
+            (85, 220, 255),
+        )
+        energy_label.set_alpha(int(255 * content_visibility))
+        energy_value.set_alpha(int(255 * content_visibility))
+        self.screen.blit(energy_label, (245, 491))
+        self.screen.blit(
+            energy_value,
+            (595 - energy_value.get_width(), 487),
+        )
+        energy_bar = pygame.Rect(245, 520, 350, 10)
+        pygame.draw.rect(
+            self.screen,
+            (18, 42, 68),
+            energy_bar,
+            border_radius=5,
+        )
+        if energy_ratio > 0:
+            pygame.draw.rect(
+                self.screen,
+                (65, 205, 255),
+                pygame.Rect(
+                    energy_bar.x,
+                    energy_bar.y,
+                    max(5, int(energy_bar.width * energy_ratio)),
+                    energy_bar.height,
+                ),
+                border_radius=5,
+            )
+
+        mouse_position = self._get_mouse_position()
+        button_visibility = max(
+            0.0,
+            min(
+                1.0,
+                (self.pause_animation_timer - 12) / 20,
+            ),
+        )
+        self._draw_pause_command_button(
+            self.resume_button,
+            "RESUME MISSION",
+            "RETURN TO LIVE COMBAT",
+            "resume",
+            mouse_position,
+            button_visibility,
+        )
+        self._draw_pause_command_button(
+            self.pause_settings_button,
+            "SYSTEM SETTINGS",
+            "AUDIO AND DISPLAY CONTROL",
+            "settings",
+            mouse_position,
+            button_visibility,
+        )
+        self._draw_pause_command_button(
+            self.pause_menu_button,
+            "ABORT TO COMMAND",
+            "CURRENT RUN WILL END",
+            "menu",
+            mouse_position,
+            button_visibility,
+        )
+
+        warning = self.menu_micro_font.render(
+            "CAUTION  //  ABORT DOES NOT ERASE CAMPAIGN PROGRESS",
+            True,
+            (205, 125, 105),
+        )
+        warning.set_alpha(int(255 * button_visibility))
+        self.screen.blit(
+            warning,
+            (
+                command_rect.centerx - warning.get_width() // 2,
+                541,
+            ),
+        )
+        hint = self.menu_micro_font.render(
             "ESC  //  RESUME MISSION",
             True,
-            (115, 135, 165),
+            (95, 125, 158),
         )
+        hint.set_alpha(int(255 * content_visibility))
         self.screen.blit(
             hint,
-            (self.width // 2 - hint.get_width() // 2, 584),
+            (
+                self.width // 2 - hint.get_width() // 2,
+                panel_rect.bottom - 28,
+            ),
         )
 
     # Desenează o carte premium pentru unul dintre primii trei piloți.
