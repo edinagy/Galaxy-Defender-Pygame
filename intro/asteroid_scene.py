@@ -3,6 +3,26 @@ import random
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
+
+STORY_CUES = (
+    (
+        0.35,
+        3.25,
+        "SHIP AI",
+        "Gravity shear ahead. Collision forecast is impossible. Manual control only.",
+        "EMERGENCY",
+    ),
+    (
+        3.35,
+        6.25,
+        "COMMANDER VALE",
+        "GF-01, I can still see your transponder. Stay alive until we can pull you—",
+        "SIGNAL LOST",
+    ),
+)
+
 
 # Jucătorul trebuie să supraviețuiască acest timp în Asteroid Ocean.
 SCENE_DURATION = 32.0
@@ -74,6 +94,29 @@ class CampaignBullet:
 # Reprezintă un asteroid activ care poate lovi nava sau proiectilele.
 class AsteroidObstacle:
 
+    _realistic_sources = None
+
+    @classmethod
+    def _load_realistic_sources(cls):
+        if cls._realistic_sources is not None:
+            return cls._realistic_sources
+
+        cls._realistic_sources = []
+        for path in (
+            "assets/images/intro/asteroid_realistic_01.png",
+            "assets/images/intro/asteroid_realistic_02.png",
+        ):
+            try:
+                source = pygame.image.load(path).convert_alpha()
+                visible_bounds = source.get_bounding_rect(min_alpha=4)
+                if visible_bounds.width and visible_bounds.height:
+                    source = source.subsurface(visible_bounds).copy()
+                cls._realistic_sources.append(source)
+            except (FileNotFoundError, pygame.error):
+                continue
+
+        return cls._realistic_sources
+
     # Creează un asteroid cu dimensiune, viteză și rotație aleatorii.
     def __init__(self, screen_width, difficulty):
         self.size = random.randint(26, 68)
@@ -117,8 +160,9 @@ class AsteroidObstacle:
 
         self.health = self.maximum_health
 
-        self.base_image = self._create_image()
+        self.base_image = self._create_realistic_image()
         self.image = self.base_image
+        self._rotation_bucket = None
         self.rect = self.image.get_rect(
             center=(
                 int(self.x),
@@ -133,8 +177,34 @@ class AsteroidObstacle:
         )
         self.collision_rect.center = self.rect.center
 
-    # Construiește procedural forma neregulată și craterele asteroidului.
-    def _create_image(self):
+    # Folosește rocile cinematice; păstrează desenul procedural ca rezervă.
+    def _create_realistic_image(self):
+        sources = self._load_realistic_sources()
+        if not sources:
+            return self._create_procedural_image()
+
+        source = random.choice(sources)
+        maximum_dimension = max(source.get_size())
+        target_dimension = max(40, int(self.size * 2.15))
+        scale = target_dimension / maximum_dimension
+        target_size = (
+            max(2, int(source.get_width() * scale)),
+            max(2, int(source.get_height() * scale)),
+        )
+        asteroid = pygame.transform.smoothscale(source, target_size)
+
+        # Variațiile discrete evită ca toate rocile să arate ca aceeași copie.
+        shade = random.choice((178, 195, 212, 230, 245))
+        asteroid.fill(
+            (shade, shade, shade, 255),
+            special_flags=pygame.BLEND_RGBA_MULT,
+        )
+        if random.random() < 0.5:
+            asteroid = pygame.transform.flip(asteroid, True, False)
+        return asteroid
+
+    # Construiește procedural o rezervă dacă asset-urile nu pot fi încărcate.
+    def _create_procedural_image(self):
         surface_size = self.size * 2 + 12
         surface = pygame.Surface(
             (surface_size, surface_size),
@@ -232,10 +302,13 @@ class AsteroidObstacle:
         self.angle += (
             self.rotation_speed * delta_time
         )
-        self.image = pygame.transform.rotate(
-            self.base_image,
-            self.angle,
-        )
+        rotation_bucket = int(self.angle / 3.0)
+        if rotation_bucket != self._rotation_bucket:
+            self.image = pygame.transform.rotate(
+                self.base_image,
+                rotation_bucket * 3.0,
+            )
+            self._rotation_bucket = rotation_bucket
         self.rect = self.image.get_rect(
             center=(
                 int(self.x),
@@ -323,6 +396,7 @@ class AsteroidScene:
         self.small_font = pygame.font.Font(None, 27)
         self.medium_font = pygame.font.Font(None, 42)
         self.title_font = pygame.font.Font(None, 72)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -344,6 +418,8 @@ class AsteroidScene:
             - 35
         )
         self.ship_speed = 430
+        self.controller_movement = (0.0, 0.0)
+        self.controller_fire_held = False
 
         self.hull = STARTING_HULL
         # Scorul primit reprezintă punctele salvate la checkpoint.
@@ -370,7 +446,7 @@ class AsteroidScene:
             return "menu"
 
         if self.game_over:
-            if event.key == pygame.K_r:
+            if event.key in (pygame.K_r, pygame.K_RETURN):
                 return "retry"
             return None
 
@@ -381,6 +457,13 @@ class AsteroidScene:
             self._shoot()
 
         return None
+
+    def set_controller_state(self, movement, fire_held):
+        self.controller_movement = (
+            float(movement[0]),
+            float(movement[1]),
+        )
+        self.controller_fire_held = bool(fire_held)
 
     # Actualizează toate mecanicile nivelului.
     def update(self, delta_time):
@@ -398,9 +481,10 @@ class AsteroidScene:
 
         # Permite tragerea continuă cât timp jucătorul ține apăsat SPACE.
         if (
-            pygame.key.get_pressed()[
-                pygame.K_SPACE
-            ]
+            (
+                pygame.key.get_pressed()[pygame.K_SPACE]
+                or self.controller_fire_held
+            )
             and not self.completed
         ):
             self._shoot()
@@ -432,8 +516,8 @@ class AsteroidScene:
     # Mută nava cu WASD sau săgeți și o păstrează în interiorul ecranului.
     def _move_ship(self, delta_time):
         keys = pygame.key.get_pressed()
-        horizontal_direction = 0
-        vertical_direction = 0
+        horizontal_direction = self.controller_movement[0]
+        vertical_direction = self.controller_movement[1]
 
         if (
             keys[pygame.K_a]
@@ -457,13 +541,11 @@ class AsteroidScene:
             vertical_direction += 1
 
         # Normalizează deplasarea diagonală, ca nava să nu fie mai rapidă.
-        if (
-            horizontal_direction != 0
-            and vertical_direction != 0
-        ):
-            diagonal_factor = 1 / math.sqrt(2)
-        else:
-            diagonal_factor = 1
+        magnitude = math.hypot(
+            horizontal_direction,
+            vertical_direction,
+        )
+        diagonal_factor = 1 / magnitude if magnitude > 1 else 1
 
         self.ship_x += (
             horizontal_direction
@@ -748,6 +830,17 @@ class AsteroidScene:
         self._draw_ship()
         self._draw_particles()
         self._draw_interface()
+        if self.elapsed_time < 7.0 and not self.game_over:
+            draw_camera_noise(self.screen, self.elapsed_time, 0.8)
+            self.cinematic.draw(
+                self.screen,
+                self.elapsed_time,
+                STORY_CUES,
+                "PROLOGUE 05  //  DEBRIS FIELD",
+                "MANUAL CONTROL",
+                letterbox=False,
+                show_skip=False,
+            )
 
         if self.game_over:
             self._draw_game_over()
@@ -835,12 +928,12 @@ class AsteroidScene:
     def _draw_interface(self):
         if self.elapsed_time < 4.5:
             title_surface = self.title_font.render(
-                "ASTEROID OCEAN",
+                "GRAVITY-SHEARED DEBRIS",
                 True,
                 (230, 244, 255),
             )
             subtitle_surface = self.small_font.render(
-                "SURVIVE THE FIELD",
+                "AUTOPILOT OFFLINE  //  SURVIVE THE FIELD",
                 True,
                 (105, 215, 255),
             )
@@ -915,7 +1008,7 @@ class AsteroidScene:
         self.screen.blit(panel, (24, 22))
 
         instructions = self.small_font.render(
-            "WASD / ARROWS - MOVE    SPACE - FIRE",
+            "WASD / STICK - MOVE    SPACE / A / RT - FIRE",
             True,
             (188, 215, 235),
         )
@@ -935,7 +1028,7 @@ class AsteroidScene:
 
         if self.completed:
             completed_text = self.medium_font.render(
-                "SECTOR CLEARED",
+                "EXIT CORRIDOR FOUND",
                 True,
                 (125, 245, 255),
             )

@@ -1,11 +1,13 @@
 import math
 import random
-from pathlib import Path
+import sys
 
 import pygame
 
 # Importă clasele folosite de aplicație.
+from achievement_manager import AchievementManager
 from background import Star
+from controller_manager import ControllerManager
 from display_manager import DisplayManager
 from enemy import Enemy
 from gameplay import Gameplay
@@ -18,6 +20,8 @@ from intro.planet_scene import PlanetScene
 from intro.vortex_scene import VortexScene
 from intro.wormhole_scene import WormholeScene
 from player import Player
+from platform_services import create_platform_services
+from runtime_paths import prepare_runtime_working_directory, user_data_path
 from save_manager import SaveManager
 from scene_manager import SceneManager
 
@@ -26,6 +30,9 @@ from scene_manager import SceneManager
 WIDTH = 1280
 HEIGHT = 720
 FPS = 60
+
+
+prepare_runtime_working_directory()
 
 
 # Clasa principală a jocului.
@@ -44,6 +51,7 @@ class GalaxyDefender:
 
         # Încarcă progresul și setările salvate ale jucătorului.
         self.save_manager = SaveManager()
+        self.platform_services = create_platform_services()
         saved_data = self.save_manager.data
 
         self.music_volume = saved_data[
@@ -71,6 +79,10 @@ class GalaxyDefender:
         )
 
         self.clock = pygame.time.Clock()
+        self.controller_manager = ControllerManager()
+        self.navigation_scene = None
+        self.navigation_index = 0
+        self.controller_navigation_active = False
 
         # SceneManager reține ce ecran este activ în acest moment.
         self.scene_manager = SceneManager(
@@ -101,6 +113,10 @@ class GalaxyDefender:
         self.title_font = pygame.font.Font(
             None,
             100,
+        )
+        self.achievement_manager = AchievementManager(
+            self.save_manager,
+            self.platform_services,
         )
 
         # Laserul jucatorului este foarte scurt, ca sa ramana placut la autofire.
@@ -215,6 +231,12 @@ class GalaxyDefender:
             get_best_score=lambda: self.save_manager.data[
                 "highest_score"
             ],
+            tutorial_is_completed=(
+                self.save_manager.is_tutorial_completed
+            ),
+            complete_tutorial=(
+                self.save_manager.complete_tutorial
+            ),
         )
 
         # Jocul porneste cu atmosfera calma a meniului principal.
@@ -301,6 +323,7 @@ class GalaxyDefender:
         self.settings_animation_timer = 0
         self.settings_animation_duration = 52
         self.settings_saved_feedback_timer = 0
+        self.tutorial_replay_feedback_timer = 0
         self.active_settings_slider = None
 
         self._create_buttons()
@@ -522,6 +545,12 @@ class GalaxyDefender:
             130,
             44,
         )
+        self.replay_tutorial_button = pygame.Rect(
+            950,
+            538,
+            190,
+            50,
+        )
         self.settings_back_button = pygame.Rect(
             470,
             625,
@@ -532,10 +561,7 @@ class GalaxyDefender:
     # Citește scorurile din leaderboard.txt și păstrează primele zece rezultate.
     @staticmethod
     def load_leaderboard():
-        leaderboard_path = (
-            Path(__file__).resolve().parent
-            / "leaderboard.txt"
-        )
+        leaderboard_path = user_data_path("leaderboard.txt")
 
         try:
             scores = []
@@ -558,10 +584,7 @@ class GalaxyDefender:
 
     # Salvează un scor nou în leaderboard și păstrează doar primele zece scoruri.
     def save_score(self, score):
-        leaderboard_path = (
-            Path(__file__).resolve().parent
-            / "leaderboard.txt"
-        )
+        leaderboard_path = user_data_path("leaderboard.txt")
 
         scores = self.load_leaderboard()
         scores.append(score)
@@ -577,6 +600,15 @@ class GalaxyDefender:
         # Salvează și recordul general în save.json.
         self.save_manager.save_highest_score(
             score
+        )
+        run_summary = (
+            self.gameplay.get_run_summary()
+            if hasattr(self, "gameplay")
+            else {"score": max(0, int(score))}
+        )
+        self.platform_services.submit_score(
+            score,
+            run_summary,
         )
 
     # Aplică volumul ales tuturor efectelor sonore folosite de gameplay.
@@ -734,7 +766,12 @@ class GalaxyDefender:
 
             for event in pygame.event.get():
                 self.handle_event(event)
+                for translated_event in (
+                    self.controller_manager.handle_event(event)
+                ):
+                    self.handle_event(translated_event)
 
+            self._sync_controller_state()
             self.update(delta_time)
             self.draw()
 
@@ -742,6 +779,7 @@ class GalaxyDefender:
             self._present_frame()
             pygame.display.flip()
 
+        self.platform_services.shutdown()
         pygame.quit()
 
     # Trimite fiecare eveniment către scena care este activă.
@@ -750,9 +788,24 @@ class GalaxyDefender:
             self.running = False
             return
 
+        if event.type == pygame.MOUSEMOTION:
+            self.controller_navigation_active = False
+
         current_scene = (
             self.scene_manager.current_scene
         )
+
+        if (
+            event.type == pygame.KEYDOWN
+            and current_scene in (
+                SceneManager.MENU,
+                SceneManager.PAUSE,
+                SceneManager.SETTINGS,
+                SceneManager.LEADERBOARD,
+            )
+            and self._handle_navigation_key(event.key)
+        ):
+            return
 
         if current_scene == SceneManager.PLANET:
             planet_action = (
@@ -979,6 +1032,77 @@ class GalaxyDefender:
             self._handle_click(
                 self._to_game_position(event.pos)
             )
+
+    def _get_navigation_targets(self):
+        current_scene = self.scene_manager.current_scene
+        if current_scene == SceneManager.MENU:
+            if self.confirm_new_game:
+                return [
+                    self.confirm_new_game_button,
+                    self.cancel_new_game_button,
+                ]
+            return [
+                button_rect
+                for button_rect, _label, _action in self._get_menu_buttons()
+            ]
+        if current_scene == SceneManager.PAUSE:
+            return [
+                self.resume_button,
+                self.pause_settings_button,
+                self.pause_menu_button,
+            ]
+        if current_scene == SceneManager.SETTINGS:
+            return [
+                self.music_minus_button,
+                self.music_plus_button,
+                self.sound_minus_button,
+                self.sound_plus_button,
+                self.resolution_minus_button,
+                self.resolution_plus_button,
+                self.fullscreen_button,
+                self.replay_tutorial_button,
+                self.settings_back_button,
+            ]
+        if current_scene == SceneManager.LEADERBOARD:
+            return [self.leaderboard_back_button]
+        return []
+
+    def _sync_navigation_scene(self):
+        current_scene = self.scene_manager.current_scene
+        if current_scene != self.navigation_scene:
+            self.navigation_scene = current_scene
+            self.navigation_index = 0
+
+    def _handle_navigation_key(self, key):
+        self._sync_navigation_scene()
+        targets = self._get_navigation_targets()
+        if not targets:
+            return False
+
+        if key in (pygame.K_UP, pygame.K_LEFT):
+            self.controller_navigation_active = True
+            self.navigation_index = (
+                self.navigation_index - 1
+            ) % len(targets)
+            return True
+        if key in (pygame.K_DOWN, pygame.K_RIGHT):
+            self.controller_navigation_active = True
+            self.navigation_index = (
+                self.navigation_index + 1
+            ) % len(targets)
+            return True
+        if key in (pygame.K_RETURN, pygame.K_SPACE):
+            self.controller_navigation_active = True
+            self.navigation_index %= len(targets)
+            self._handle_click(targets[self.navigation_index].center)
+            return True
+        return False
+
+    def _sync_controller_state(self):
+        movement = self.controller_manager.movement_vector()
+        fire_held = self.controller_manager.fire_held()
+        self.gameplay.set_controller_state(movement, fire_held)
+        self.asteroid_scene.set_controller_state(movement, fire_held)
 
     # Controlează acțiunea tastei ESC în funcție de scena curentă.
     def _handle_escape(self):
@@ -1214,6 +1338,13 @@ class GalaxyDefender:
         ):
             self._toggle_fullscreen()
 
+        elif self.replay_tutorial_button.collidepoint(
+            mouse_position
+        ):
+            self.save_manager.queue_tutorial_replay()
+            self.tutorial_replay_feedback_timer = 180
+            self.settings_saved_feedback_timer = 0
+
         elif self.settings_back_button.collidepoint(
             mouse_position
         ):
@@ -1355,6 +1486,7 @@ class GalaxyDefender:
             current_scene=SceneManager.GAMEPLAY,
             checkpoint=0,
         )
+        self.achievement_manager.unlock("STORY_COMPLETE")
         self._start_gameplay(campaign_score)
 
     # Continuă campania de la scena și checkpoint-ul salvate.
@@ -1446,6 +1578,11 @@ class GalaxyDefender:
 
     # Returneaza pozitia mouse-ului deja adaptata la rezolutia jocului.
     def _get_mouse_position(self):
+        self._sync_navigation_scene()
+        targets = self._get_navigation_targets()
+        if self.controller_navigation_active and targets:
+            self.navigation_index %= len(targets)
+            return targets[self.navigation_index].center
         return self.display_manager.get_mouse_position()
 
     # Activează sau dezactivează fullscreen la rezoluția selectată.
@@ -1512,6 +1649,8 @@ class GalaxyDefender:
             )
             if self.settings_saved_feedback_timer > 0:
                 self.settings_saved_feedback_timer -= 1
+            if self.tutorial_replay_feedback_timer > 0:
+                self.tutorial_replay_feedback_timer -= 1
 
         elif current_scene == SceneManager.PLANET:
             planet_action = (
@@ -1579,6 +1718,12 @@ class GalaxyDefender:
 
         elif current_scene == SceneManager.GAMEPLAY:
             self.gameplay.update()
+            self.achievement_manager.evaluate_gameplay(
+                self.gameplay
+            )
+
+        self.platform_services.update()
+        self.achievement_manager.update()
 
         if current_scene != SceneManager.LEADERBOARD:
             self.leaderboard_animation_timer = 0
@@ -1665,6 +1810,8 @@ class GalaxyDefender:
 
         elif current_scene == SceneManager.SETTINGS:
             self._draw_settings()
+
+        self.achievement_manager.draw(self.screen)
 
     # Desenează fundalul, nava, inamicii decorativi, logo-ul și butoanele meniului.
     def _draw_menu(self):
@@ -3590,10 +3737,11 @@ class GalaxyDefender:
                 (80, 220, 180) if player.shield else (135, 155, 185),
             ),
             (
-                "COMBAT LINK",
+                "COMBAT / GRAZE LINK",
                 (
                     f"C{self.gameplay.combo}"
                     f"  //  X{self.gameplay.multiplier}"
+                    f"  //  G{self.gameplay.graze_chain}"
                 ),
                 (255, 190, 85),
             ),
@@ -4486,6 +4634,47 @@ class GalaxyDefender:
         )
         self.screen.blit(button, button_rect.topleft)
 
+    def _draw_replay_tutorial_button(self, visibility, mouse_position):
+        button_rect = self.replay_tutorial_button
+        hovered = button_rect.collidepoint(mouse_position)
+        queued = not self.save_manager.is_tutorial_completed()
+        accent = (80, 225, 175) if queued else (155, 115, 245)
+        button = pygame.Surface(button_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            button,
+            (*accent, int((105 if hovered else 48) * visibility)),
+            button.get_rect(),
+            border_radius=11,
+        )
+        pygame.draw.rect(
+            button,
+            (*accent, int((235 if hovered else 145) * visibility)),
+            button.get_rect(),
+            2,
+            border_radius=11,
+        )
+        title = self.menu_label_font.render(
+            "TUTORIAL QUEUED" if queued else "REPLAY TUTORIAL",
+            True,
+            (235, 250, 255),
+        )
+        subtitle = self.menu_micro_font.render(
+            "NEXT RUN" if queued else "FIRST-RUN TRAINING",
+            True,
+            accent,
+        )
+        title.set_alpha(int(255 * visibility))
+        subtitle.set_alpha(int(255 * visibility))
+        button.blit(
+            title,
+            (button_rect.width // 2 - title.get_width() // 2, 8),
+        )
+        button.blit(
+            subtitle,
+            (button_rect.width // 2 - subtitle.get_width() // 2, 29),
+        )
+        self.screen.blit(button, button_rect.topleft)
+
     # Desenează configurația audio, video și comenzile pilotului.
     def _draw_settings(self):
         self._draw_secondary_screen_frame(
@@ -4637,7 +4826,10 @@ class GalaxyDefender:
                 content_visibility,
             )
 
-        if self.active_settings_slider is not None:
+        if self.tutorial_replay_feedback_timer > 0:
+            save_status_text = "TUTORIAL QUEUED  //  STARTS WITH THE NEXT RUN"
+            save_status_color = (80, 225, 175)
+        elif self.active_settings_slider is not None:
             save_status_text = "ADJUSTING OUTPUT  //  RELEASE TO SAVE"
             save_status_color = (255, 190, 90)
         elif self.settings_saved_feedback_timer > 0:
@@ -4721,7 +4913,7 @@ class GalaxyDefender:
                 (680, 452 + detail_index * 20),
             )
 
-        controls_rect = pygame.Rect(140, 538, 1000, 50)
+        controls_rect = pygame.Rect(140, 538, 790, 50)
         controls = pygame.Surface(controls_rect.size, pygame.SRCALPHA)
         pygame.draw.rect(
             controls,
@@ -4738,10 +4930,10 @@ class GalaxyDefender:
         )
         self.screen.blit(controls, controls_rect.topleft)
         control_definitions = (
-            ("WASD / ARROWS", "MOVE"),
-            ("SPACE", "FIRE"),
-            ("E", "ENERGY PULSE"),
-            ("ESC", "PAUSE / BACK"),
+            ("WASD / ARROWS / STICK", "MOVE"),
+            ("SPACE / A / RT", "FIRE"),
+            ("E / X", "ENERGY PULSE"),
+            ("ESC / START / B", "PAUSE / BACK"),
         )
         control_width = controls_rect.width // len(control_definitions)
         for control_index, (key_text, action_text) in enumerate(
@@ -4772,6 +4964,11 @@ class GalaxyDefender:
                 action_surface,
                 (center_x - action_surface.get_width() // 2, 569),
             )
+
+        self._draw_replay_tutorial_button(
+            content_visibility,
+            mouse_position,
+        )
 
         back_visibility = max(
             0.0,
@@ -4984,4 +5181,17 @@ class GalaxyDefender:
 # Pornește aplicația numai atunci când main.py este rulat direct.
 if __name__ == "__main__":
     game = GalaxyDefender()
-    game.run()
+    if "--smoke-test" in sys.argv:
+        try:
+            for _ in range(8):
+                pygame.event.pump()
+                game._sync_controller_state()
+                game.update(1.0 / FPS)
+                game.draw()
+                game._present_frame()
+                pygame.display.flip()
+        finally:
+            game.platform_services.shutdown()
+            pygame.quit()
+    else:
+        game.run()

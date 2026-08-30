@@ -21,6 +21,7 @@ class Player:
         self.x = 640 - self.image.get_width() // 2
         self.y = 550
         self.speed = 8
+        self.controller_movement = (0.0, 0.0)
 
         self.rect = self.image.get_rect(
             topleft=(self.x, self.y)
@@ -137,20 +138,33 @@ class Player:
         )
 
     # Citește tastele WASD și deplasează nava în interiorul ecranului.
+    def set_controller_movement(self, movement):
+        self.controller_movement = (
+            float(movement[0]),
+            float(movement[1]),
+        )
+
     def move(self, screen_width, screen_height):
         keys = pygame.key.get_pressed()
+        horizontal = self.controller_movement[0]
+        vertical = self.controller_movement[1]
 
-        if keys[pygame.K_a]:
-            self.x -= self.speed
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            horizontal -= 1.0
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            horizontal += 1.0
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            vertical -= 1.0
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+            vertical += 1.0
 
-        if keys[pygame.K_d]:
-            self.x += self.speed
+        magnitude = math.hypot(horizontal, vertical)
+        if magnitude > 1.0:
+            horizontal /= magnitude
+            vertical /= magnitude
 
-        if keys[pygame.K_w]:
-            self.y -= self.speed
-
-        if keys[pygame.K_s]:
-            self.y += self.speed
+        self.x += horizontal * self.speed
+        self.y += vertical * self.speed
 
         # Nava nu poate ieși în afara arenei.
         if self.x < 0:

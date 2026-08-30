@@ -340,6 +340,58 @@ def _draw_energy_pulse_bar(
         screen.blit(ready_glow, panel_rect.topleft)
 
 
+def _draw_graze_chain(
+    screen,
+    x,
+    y,
+    graze_chain,
+    total_grazes,
+    flash_timer,
+    pulse,
+):
+    graze_tier = min(5, 1 + max(0, graze_chain) // 10)
+    active = graze_chain > 0
+    accent_color = (75, 235, 255) if active else (85, 120, 145)
+    panel_rect = pygame.Rect(x, y, 208, 40)
+    _draw_glass_panel(
+        screen,
+        panel_rect,
+        accent_color,
+        fill_color=(5, 15, 29, 215),
+    )
+
+    label = _get_font(15).render(
+        f"GRAZE CHAIN  //  {total_grazes} EVADED",
+        True,
+        (130, 185, 210),
+    )
+    value = _get_font(23).render(
+        f"G{graze_chain:03d}   RISK x{graze_tier}",
+        True,
+        accent_color,
+    )
+    screen.blit(label, (panel_rect.x + 12, panel_rect.y + 5))
+    screen.blit(
+        value,
+        (
+            panel_rect.right - value.get_width() - 12,
+            panel_rect.y + 18,
+        ),
+    )
+
+    if flash_timer > 0:
+        flash = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        flash_alpha = min(170, 45 + flash_timer * 5 + int(pulse * 20))
+        pygame.draw.rect(
+            flash,
+            (*accent_color, flash_alpha),
+            flash.get_rect(),
+            2,
+            border_radius=12,
+        )
+        screen.blit(flash, panel_rect.topleft)
+
+
 # Deseneaza HUD-ul principal fara sa acopere centrul arenei.
 def draw_game_ui(
     screen,
@@ -351,6 +403,9 @@ def draw_game_ui(
     player=None,
     stage=1,
     combo=0,
+    graze_chain=0,
+    total_grazes=0,
+    graze_flash_timer=0,
 ):
     screen_width = screen.get_width()
     pulse = (
@@ -611,5 +666,14 @@ def draw_game_ui(
             right_panel.x,
             right_panel.bottom + 43,
             player,
+            pulse,
+        )
+        _draw_graze_chain(
+            screen,
+            right_panel.x,
+            right_panel.bottom + 96,
+            graze_chain,
+            total_grazes,
+            graze_flash_timer,
             pulse,
         )

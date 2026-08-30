@@ -2,9 +2,42 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata totală a călătoriei prin wormhole.
-SCENE_DURATION = 11.5
+SCENE_DURATION = 12.0
+
+STORY_CUES = (
+    (
+        0.4,
+        3.1,
+        "SHIP AI",
+        "No star map. No command link. External clocks are diverging from ship time.",
+        "ISOLATED TRANSIT",
+    ),
+    (
+        3.2,
+        5.9,
+        "SHIP AI",
+        "Navigation solution impossible. Holding the ship together is now the only priority.",
+        "SPATIAL FIELD 78%",
+    ),
+    (
+        6.0,
+        8.7,
+        "SHIP AI",
+        "Source signal detected ahead. It is responding with our own encrypted handshake.",
+        "UNKNOWN RESPONSE",
+    ),
+    (
+        8.8,
+        10.2,
+        "SHIP AI",
+        "Brace for uncontrolled emergence.",
+        "IMPACT WARNING",
+    ),
+)
 
 
 # Reprezintă secvența „Entering Wormhole” și momentul „Emerging...”.
@@ -50,6 +83,7 @@ class WormholeScene:
         self.small_font = pygame.font.Font(None, 27)
         self.medium_font = pygame.font.Font(None, 40)
         self.title_font = pygame.font.Font(None, 74)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -147,6 +181,18 @@ class WormholeScene:
         self._draw_energy_rings()
         self._draw_ship()
         self._draw_transit_interface()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            1.0 + self.travel_progress * 0.8,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 07  //  UNKNOWN TRANSIT",
+            "NO EXTERNAL REFERENCE",
+        )
         self._draw_emergence_flash()
         self._draw_fade()
 
@@ -315,8 +361,8 @@ class WormholeScene:
     # Desenează etapa curentă și informațiile de tranzit.
     def _draw_transit_interface(self):
         if self.travel_progress < 0.22:
-            title = "ENTERING WORMHOLE"
-            status = "SPATIAL LOCK ACQUIRED"
+            title = "FORCED TRANSIT"
+            status = "REFERENCE FRAME LOST"
             status_color = (120, 225, 255)
         elif self.travel_progress < 0.72:
             title = "SPACETIME TRANSIT"
@@ -354,26 +400,6 @@ class WormholeScene:
             )
             self._draw_progress_bar()
 
-        if (
-            self.elapsed_time >= 8.0
-            and self.travel_progress < 0.86
-        ):
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - CONTINUE",
-                True,
-                (225, 238, 250),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width
-                    - continue_text.get_width()
-                    - 28,
-                    self.height
-                    - continue_text.get_height()
-                    - 22,
-                ),
-            )
 
     # Desenează viteza, integritatea spațială și distorsiunea temporală.
     def _draw_telemetry_panel(

@@ -2,9 +2,42 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata apropierii de vortex înainte de următoarea zonă a campaniei.
-SCENE_DURATION = 11.0
+SCENE_DURATION = 12.0
+
+STORY_CUES = (
+    (
+        0.6,
+        3.4,
+        "SHIP AI",
+        "The signal is bending local space. Our plotted route now terminates inside the distortion.",
+        "NAVIGATION WARNING",
+    ),
+    (
+        3.5,
+        6.6,
+        "COMMANDER VALE",
+        "Break off, GF-01. That is not a transit gate. Repeat: break off immediately.",
+        "SECURE CHANNEL 01",
+    ),
+    (
+        6.7,
+        9.6,
+        "SHIP AI",
+        "Negative control response. Main engines are at full reverse. Distance continues to fall.",
+        "EMERGENCY",
+    ),
+    (
+        9.7,
+        11.8,
+        "COMMANDER VALE",
+        "GF-01, your signal is breaking up. Stay with me—",
+        "SIGNAL LOST",
+    ),
+)
 
 
 # Reprezintă secvența cinematică „Beyond the Vortex”.
@@ -47,6 +80,7 @@ class VortexScene:
         self.small_font = pygame.font.Font(None, 27)
         self.medium_font = pygame.font.Font(None, 38)
         self.title_font = pygame.font.Font(None, 72)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -121,6 +155,18 @@ class VortexScene:
         self._draw_gravity_distortion()
         self._draw_ship()
         self._draw_navigation_interface()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            0.45 + self.approach_progress * 1.4,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 04  //  GRAVITATIONAL LENS",
+            "CONTROL LINK DEGRADED" if self.elapsed_time >= 6.7 else "UNSCHEDULED CONTACT",
+        )
         self._draw_fade()
 
     # Mișcă foarte puțin fundalul pentru a sugera instabilitatea spațiului.
@@ -263,7 +309,7 @@ class VortexScene:
     # Desenează titlul, avertizarea și informațiile de navigație.
     def _draw_navigation_interface(self):
         self._draw_text_with_shadow(
-            "BEYOND THE VORTEX",
+            "UNCHARTED GRAVITATIONAL LENS",
             self.title_font,
             38,
             (232, 242, 255),
@@ -345,23 +391,6 @@ class VortexScene:
 
         self._draw_progress_bar()
 
-        if self.elapsed_time >= 8.0:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - CONTINUE",
-                True,
-                (215, 232, 255),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width
-                    - continue_text.get_width()
-                    - 30,
-                    self.height
-                    - continue_text.get_height()
-                    - 24,
-                ),
-            )
 
     # Desenează progresul apropierii de anomalia spațială.
     def _draw_progress_bar(self):
@@ -438,12 +467,12 @@ class VortexScene:
                     - self.elapsed_time / 1.2
                 )
             )
-        elif self.elapsed_time > 10.0:
+        elif self.elapsed_time > 11.0:
             fade_alpha = int(
                 255
                 * min(
                     1.0,
-                    self.elapsed_time - 10.0,
+                    self.elapsed_time - 11.0,
                 )
             )
         else:

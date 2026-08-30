@@ -2,9 +2,35 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata lansării înainte de trecerea automată spre următoarea zonă.
-SCENE_DURATION = 10.0
+SCENE_DURATION = 11.5
+
+STORY_CUES = (
+    (
+        0.7,
+        3.6,
+        "FLIGHT CONTROL",
+        "GF-01, emergency ascent approved. Hold Vector Seven until orbital separation.",
+        "HOMEWORLD CONTROL",
+    ),
+    (
+        3.7,
+        7.4,
+        "COMMANDER VALE",
+        "Every defense channel is carrying the same signal. Do not answer it. Observe and report.",
+        "SECURE CHANNEL 01",
+    ),
+    (
+        7.5,
+        11.2,
+        "SHIP AI",
+        "Unscheduled gravitational lens detected ahead. Flight corridor is no longer stable.",
+        "NAVIGATION WARNING",
+    ),
+)
 
 
 # Reprezintă lansarea navei și ieșirea din atmosfera planetei.
@@ -47,6 +73,7 @@ class LaunchScene:
         self.small_font = pygame.font.Font(None, 28)
         self.medium_font = pygame.font.Font(None, 42)
         self.title_font = pygame.font.Font(None, 72)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -115,6 +142,18 @@ class LaunchScene:
         self._draw_background()
         self._draw_ship()
         self._draw_flight_interface()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            0.25 + max(0.0, self.launch_progress - 0.7) * 1.8,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 03  //  ORBITAL ASCENT",
+            "VECTOR 07 // UNSTABLE" if self.elapsed_time >= 7.5 else "LAUNCH CORRIDOR CLEAR",
+        )
         self._draw_fade()
 
     # Deplasează subtil fundalul pentru a sugera creșterea altitudinii.
@@ -197,15 +236,30 @@ class LaunchScene:
             * vibration_strength
         )
 
-        self.screen.blit(
-            ship_image,
-            (ship_x + vibration, ship_y),
-        )
+        if self.launch_progress > 0.18:
+            trail_alpha = int(115 * min(1.0, self.launch_progress * 1.8))
+            trail = pygame.Surface((54, 150), pygame.SRCALPHA)
+            pygame.draw.polygon(
+                trail,
+                (
+                    65,
+                    190,
+                    255,
+                    trail_alpha,
+                ),
+                ((16, 0), (38, 0), (48, 145), (27, 110), (6, 145)),
+            )
+            self.screen.blit(
+                trail,
+                (ship_x + ship_width // 2 - 27, ship_y + ship_height - 20),
+            )
+
+        self.screen.blit(ship_image, (ship_x + vibration, ship_y))
 
     # Desenează titlul, altitudinea, viteza și starea lansării.
     def _draw_flight_interface(self):
         self._draw_text_with_shadow(
-            "DESTINATION: ENEMY TERRITORY",
+            "EMERGENCY ASCENT  //  VECTOR 07",
             self.title_font,
             42,
             (232, 246, 255),
@@ -263,23 +317,6 @@ class LaunchScene:
 
         self._draw_progress_bar()
 
-        if self.elapsed_time >= 7.2:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - CONTINUE",
-                True,
-                (215, 235, 255),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width
-                    - continue_text.get_width()
-                    - 32,
-                    self.height
-                    - continue_text.get_height()
-                    - 24,
-                ),
-            )
 
     # Desenează progresul călătoriei către spațiu.
     def _draw_progress_bar(self):
@@ -356,13 +393,13 @@ class LaunchScene:
                     - self.elapsed_time / 1.2
                 )
             )
-        elif self.elapsed_time > 9.1:
+        elif self.elapsed_time > 10.6:
             fade_alpha = int(
                 255
                 * min(
                     1.0,
                     (
-                        self.elapsed_time - 9.1
+                        self.elapsed_time - 10.6
                     )
                     / 0.9,
                 )

@@ -2,9 +2,35 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata totală a scenei înainte de trecerea automată spre hangar.
-SCENE_DURATION = 10.0
+SCENE_DURATION = 13.0
+
+STORY_CUES = (
+    (
+        3.0,
+        5.9,
+        "SHIP AI",
+        "Orbital Defense Grid has gone dark. Multiple civilian lanes are collapsing.",
+        "EMERGENCY",
+    ),
+    (
+        6.0,
+        9.8,
+        "COMMANDER VALE",
+        "GF-01, an unknown signal breached the perimeter. Report to Hangar Seven. Now.",
+        "SECURE CHANNEL 01",
+    ),
+    (
+        9.9,
+        12.7,
+        "COMMANDER VALE",
+        "Your orders are simple: trace the signal, identify the threat, and protect Homeworld.",
+        "MISSION PRIORITY // BLACK",
+    ),
+)
 
 
 # Reprezintă primul capitol al campaniei: „We Depart From Our Home”.
@@ -18,6 +44,10 @@ class PlanetScene:
         background_path=(
             "assets/images/intro/"
             "planet_home_background.png"
+        ),
+        alert_background_path=(
+            "assets/images/intro/"
+            "planet_home_alert_background.png"
         ),
     ):
         self.screen = screen
@@ -34,6 +64,13 @@ class PlanetScene:
                 self.width + 80,
                 self.height + 45,
             ),
+        )
+        alert_background = pygame.image.load(
+            alert_background_path
+        ).convert()
+        self.alert_background = pygame.transform.smoothscale(
+            alert_background,
+            (self.width + 80, self.height + 45),
         )
 
         # Nava folosește același design ca în gameplay.
@@ -57,6 +94,7 @@ class PlanetScene:
             None,
             82,
         )
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -65,6 +103,7 @@ class PlanetScene:
         self.elapsed_time = 0.0
         self.camera_offset = 0.0
         self.ship_engine_power = 0.0
+        self.alert_progress = 0.0
         self.finished = False
 
     # Primește comenzile utilizatorului.
@@ -95,8 +134,13 @@ class PlanetScene:
             * 28
         )
 
-        # Motoarele încep să se încarce după prezentarea orașului.
-        if self.elapsed_time > 5.0:
+        self.alert_progress = max(
+            0.0,
+            min(1.0, (self.elapsed_time - 2.15) / 0.65),
+        )
+
+        # Motoarele încep să se încarce după primirea ordinului de plecare.
+        if self.elapsed_time > 8.0:
             self.ship_engine_power = min(
                 1.0,
                 self.ship_engine_power
@@ -118,6 +162,18 @@ class PlanetScene:
         self._draw_background()
         self._draw_ship()
         self._draw_cinematic_text()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            0.35 + self.alert_progress * 0.65,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 01  //  HOMEWORLD",
+            "ORBITAL EMERGENCY" if self.alert_progress else "DAWN WATCH",
+        )
         self._draw_fade()
 
     # Desenează fundalul cu o mișcare lentă de cameră.
@@ -129,6 +185,21 @@ class PlanetScene:
             self.background,
             (background_x, -22),
         )
+        if self.alert_progress > 0:
+            alert_surface = self.alert_background.copy()
+            alert_surface.set_alpha(int(255 * self.alert_progress))
+            self.screen.blit(alert_surface, (background_x, -22))
+
+        # Flash-ul scurt marchează ruperea apărării orbitale.
+        flash_distance = abs(self.elapsed_time - 2.22)
+        if flash_distance < 0.32:
+            flash_alpha = int(155 * (1.0 - flash_distance / 0.32))
+            flash = pygame.Surface(
+                (self.width, self.height),
+                pygame.SRCALPHA,
+            )
+            flash.fill((255, 220, 180, flash_alpha))
+            self.screen.blit(flash, (0, 0))
 
     # Desenează nava pe platformă și energia motoarelor.
     def _draw_ship(self):
@@ -167,84 +238,34 @@ class PlanetScene:
 
     # Desenează textele succesive care prezintă începutul misiunii.
     def _draw_cinematic_text(self):
-        if self.elapsed_time < 2.6:
+        if self.elapsed_time < 2.4:
             self._draw_text_with_fade(
-                "YEAR 2248",
+                "HOMEWORLD  //  05:42 LOCAL TIME",
                 self.small_font,
-                54,
+                76,
                 0.2,
-                2.6,
+                2.4,
                 (180, 220, 255),
             )
 
-        if 1.8 <= self.elapsed_time < 6.4:
+        if 0.7 <= self.elapsed_time < 2.55:
             self._draw_text_with_fade(
-                "WE DEPART FROM OUR HOME",
+                "THE LAST QUIET MORNING",
                 self.title_font,
-                92,
-                1.8,
-                6.4,
+                112,
+                0.7,
+                2.55,
                 (235, 248, 255),
             )
 
-        if 3.7 <= self.elapsed_time < 8.2:
+        if 2.45 <= self.elapsed_time < 5.3:
             self._draw_text_with_fade(
-                "MISSION 01  //  DESTINATION: ENEMY TERRITORY",
+                "ORBITAL DEFENSE FAILURE",
                 self.medium_font,
-                180,
-                3.7,
-                8.2,
-                (80, 210, 255),
-            )
-
-        if self.elapsed_time >= 7.2:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - CONTINUE",
-                True,
-                (210, 230, 255),
-            )
-
-            alpha = int(
-                130
-                + 125
-                * (
-                    0.5
-                    + 0.5
-                    * math.sin(
-                        self.elapsed_time * 3
-                    )
-                )
-            )
-            continue_text.set_alpha(alpha)
-
-            hint_panel = pygame.Surface(
-                (
-                    continue_text.get_width() + 26,
-                    continue_text.get_height() + 14,
-                ),
-                pygame.SRCALPHA,
-            )
-            pygame.draw.rect(
-                hint_panel,
-                (5, 12, 30, 145),
-                hint_panel.get_rect(),
-                border_radius=8,
-            )
-            hint_panel.blit(
-                continue_text,
-                (13, 7),
-            )
-
-            self.screen.blit(
-                hint_panel,
-                (
-                    self.width
-                    - hint_panel.get_width()
-                    - 35,
-                    self.height
-                    - hint_panel.get_height()
-                    - 28,
-                ),
+                88,
+                2.45,
+                5.3,
+                (255, 120, 92),
             )
 
     # Desenează un text care apare și dispare progresiv.

@@ -1,76 +1,76 @@
 # Galaxy Defender
 
-Galaxy Defender este un joc 2D de tip space shooter realizat în Python cu biblioteca Pygame. Proiectul combină o campanie cinematică, lupte pe wave-uri, evenimente spațiale și un boss final cu mai multe faze.
+Galaxy Defender este un arcade space shooter 2D pentru Windows, construit în
+Python/Pygame. Campania cinematică duce jucătorul până în teritoriul Dead Star,
+apoi lupta devine o rundă endless axată pe scor și leaderboard.
 
-# Poveste
+## Ce conține jocul
 
-Jucătorul părăsește planeta natală, traversează un vortex și un câmp de asteroizi, intră într-un wormhole și ajunge în sistemul ostil Dead Star. După încheierea secvențelor cinematice începe lupta principală pentru apărarea galaxiei.
+- campanie cinematică în opt scene, cu incident orbital, dialoguri radio,
+  Commander Vale și o tranziție coerentă spre teritoriul Dead Star;
+- `NEW GAME` pornește povestea completă, iar `CONTINUE` reia checkpoint-ul salvat;
+- tutorial contextual la prima intrare în luptă, cu opțiune de replay din Settings;
+- rundă endless: fiecare Sovereign învins deschide următorul stage;
+- dificultate, viteză, recompense și evenimente crescute în stage-urile adânci;
+- scout, fighter, tank, elite, Shield Carrier și Phase Hunter;
+- zece evenimente spațiale, inclusiv Phase Storm;
+- boss Sovereign cu trei faze și atacuri suplimentare după Stage 1;
+- combo care se pierde numai la damage real și Graze Chain pentru joc riscant;
+- patru niveluri de armă, Energy Pulse, scut și power-up-uri;
+- cinci vieți la începutul fiecărei runde competitive;
+- opt achievements persistente și leaderboard local;
+- integrare Steam pregătită printr-un bridge opțional, cu fallback local;
+- tastatură, mouse și controller (Xbox-style) în meniu și gameplay;
+- rezoluție adaptivă, fullscreen, setări audio, pauză și Game Over.
 
-# Funcționalități principale
+## Controale
 
-- intro cinematic alcătuit din mai multe scene;
-- salvarea progresului și opțiuni `CONTINUE` / `NEW GAME`;
-- wave-uri cu dificultate progresivă;
-- inamici scout, fighter, tank și elite;
-- tipuri diferite de proiectile și comportamente de atac;
-- nouă evenimente spațiale prezentate într-o ordine stabilită;
-- sistem de upgrade al armei cu patru niveluri;
-- abilitate specială `Energy Pulse`;
-- power-up-uri pentru armă, scut și viață;
-- combo, multiplicator de scor și leaderboard;
-- boss final cu trei faze, generatoare, proiectile și lasere;
-- muzică, ambianțe și efecte sonore;
-- meniu, pauză, setări audio, fullscreen și selector de rezoluție.
+| Acțiune | Tastatură | Controller |
+|---|---|---|
+| Mișcare / navigare | `WASD` / săgeți | stick stânga / D-pad |
+| Foc automat / confirmare | `SPACE` / `ENTER` | `A` / `RT` |
+| Energy Pulse | `E` | `X` |
+| Omitere tutorial | `F1` | `Y` |
+| Pauză / înapoi | `ESC` | `START` / `B` |
+| Retry după Game Over | `R` / `ENTER` | `A` |
 
-# Controale
-
-| Acțiune | Taste |
-|---|---|
-| Mișcare | `WASD` |
-| Tragere automată | Ține apăsat `SPACE` |
-| Energy Pulse | `E`, când bara este încărcată |
-| Pauză / revenire | `ESC` |
-| Retry după Game Over | `R` |
-
-# Instalare și rulare
+## Rulare din surse
 
 Este recomandat Python 3.12.
 
-```bash
+```powershell
 python -m venv .venv
-```
-
-Activarea mediului virtual pe Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-Instalarea dependențelor:
-
-```bash
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-Pornirea jocului:
-
-```bash
 python main.py
 ```
 
-# Structura proiectului
+Testele automate:
 
-- `main.py` — pornește jocul și coordonează meniurile și scenele;
-- `gameplay.py` — gestionează lupta, coliziunile, wave-urile și scorul;
-- `player.py` — controlează nava jucătorului;
-- `enemy.py` și `enemy_bullet.py` — definesc inamicii și atacurile lor;
-- `boss.py` — conține bossul final și cele trei faze;
-- `space_events.py` — coordonează evenimentele speciale;
-- `save_manager.py` — salvează progresul și setările;
-- `display_manager.py` — gestionează rezoluția și modul fullscreen;
-- `intro/` — conține scenele cinematice;
-- `assets/` — conține imaginile, muzica, sunetele și fonturile.
+```powershell
+python -m unittest discover -s tests -v
+```
 
-# Starea proiectului
+Buildul Windows:
 
-Proiectul este funcțional și se află în dezvoltare. Versiunea curentă este pregătită pentru prezentarea progresului realizat până în acest moment.
+```powershell
+pip install -r requirements-build.txt
+.\scripts\build_windows.ps1
+```
+
+Executabilul este generat în `dist/GalaxyDefender/GalaxyDefender.exe`.
+`python main.py --smoke-test` verifică inițializarea și randarea fără a porni
+bucla interactivă.
+
+## Date locale
+
+În dezvoltare, progresul se salvează în `data/`. În buildul Windows, fișierele
+sunt păstrate în `%LOCALAPPDATA%\GalaxyDefender`, separat de executabil, astfel
+încât update-urile să nu șteargă progresul.
+
+## Release
+
+Instrucțiunile de Steamworks, checklist-ul QA și textul pentru pagina magazinului
+sunt în folderul `release/`. Codul funcționează complet fără Steam; publicarea
+achievements/leaderboard necesită AppID, Steamworks SDK și configurarea aplicației
+în contul partenerului.

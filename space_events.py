@@ -3861,6 +3861,7 @@ class PhaseStormEvent:
         self.portal_count = 3
         self.portals = []
         self.projectiles = []
+        self.pending_grazes = []
 
     def start(self, wave):
         self.state = "warning"
@@ -3996,6 +3997,7 @@ class PhaseStormEvent:
                         * projectile_speed,
                         "radius": 10,
                         "trail": [],
+                        "grazed": False,
                     }
                 )
                 continue
@@ -4028,6 +4030,14 @@ class PhaseStormEvent:
                 player_was_hit = True
                 continue
 
+            graze_zone = player_hitbox.inflate(44, 44)
+            if (
+                not projectile.get("grazed", False)
+                and projectile_rect.colliderect(graze_zone)
+            ):
+                projectile["grazed"] = True
+                self.pending_grazes.append(projectile_rect.center)
+
             if (
                 projectile_rect.right < -40
                 or projectile_rect.left > self.screen_width + 40
@@ -4037,6 +4047,11 @@ class PhaseStormEvent:
                 self.projectiles.remove(projectile)
 
         return player_was_hit
+
+    def consume_grazes(self):
+        grazes = self.pending_grazes[:]
+        self.pending_grazes.clear()
+        return grazes
 
     def draw(self, screen):
         if self.state in ("idle", "finished"):
@@ -4297,6 +4312,7 @@ class SpaceEventManager:
         # Gameplay-ul folosește semnalul pentru a porni bossul final.
         self.all_events_completed = False
         self.phase_storm_reward_pending = 0
+        self.phase_storm_grazes_pending = []
 
     # Pauzele scad gradual, dar nu dispar complet în stage-urile foarte mari.
     def _scaled_cooldown(
@@ -4346,6 +4362,11 @@ class SpaceEventManager:
             player_was_hit = self.current_event.update(
                 player_hitbox,
                 wave,
+            )
+
+        if self.current_event is self.phase_storm:
+            self.phase_storm_grazes_pending.extend(
+                self.phase_storm.consume_grazes()
             )
 
         # Evenimentul terminat este resetat, apoi incepe o pauza.
@@ -4436,6 +4457,11 @@ class SpaceEventManager:
         reward = self.phase_storm_reward_pending
         self.phase_storm_reward_pending = 0
         return reward
+
+    def consume_phase_storm_grazes(self):
+        grazes = self.phase_storm_grazes_pending[:]
+        self.phase_storm_grazes_pending.clear()
+        return grazes
 
     # Ajuta gameplay-ul sa reduca, nu sa opreasca, lupta in Gravity Wave.
     def gravity_wave_is_running(self):

@@ -11,7 +11,15 @@ __pycache__/
 *.iml
 # Progres local si leaderboard personal
 data/save.json
+data/settings.json
 leaderboard.txt
+data/platform_queue.json
+steam_appid.txt
+# Build-uri și dependențe locale de packaging
+build/
+dist/
+.build-deps/
+release/*.zip
 # Fisiere temporare si ale sistemului de operare
 *.tmp
 .DS_Store

@@ -2,9 +2,35 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata secvenței din hangar înainte de lansarea automată.
-SCENE_DURATION = 9.5
+SCENE_DURATION = 12.0
+
+STORY_CUES = (
+    (
+        0.8,
+        3.7,
+        "FLIGHT CONTROL",
+        "Hangar Seven is sealed. Emergency launch window opens in ninety seconds.",
+        "HOMEWORLD CONTROL",
+    ),
+    (
+        3.8,
+        7.3,
+        "SHIP AI",
+        "Hull sealed. Navigation green. Weapons restricted until orbital clearance.",
+        "GF-01 INTERNAL",
+    ),
+    (
+        7.4,
+        11.6,
+        "COMMANDER VALE",
+        "Three patrols vanished near the signal. You are not being sent to win a war. Find them, then come home.",
+        "SECURE CHANNEL 01",
+    ),
+)
 
 
 # Reprezintă pregătirea navei în hangarul bazei militare.
@@ -48,6 +74,7 @@ class HangarScene:
         self.small_font = pygame.font.Font(None, 28)
         self.medium_font = pygame.font.Font(None, 40)
         self.title_font = pygame.font.Font(None, 72)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -105,6 +132,14 @@ class HangarScene:
         self.screen.blit(self.background, (0, 0))
         self._draw_ship()
         self._draw_preflight_interface()
+        draw_camera_noise(self.screen, self.elapsed_time, 0.35)
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 02  //  HANGAR SEVEN",
+            "EMERGENCY SCRAMBLE",
+        )
         self._draw_fade()
 
     # Desenează nava pe platforma centrală.
@@ -170,7 +205,7 @@ class HangarScene:
     # Desenează titlul, verificările și bara de progres.
     def _draw_preflight_interface(self):
         self._draw_text_with_shadow(
-            "HANGAR 07  //  PRE-FLIGHT SEQUENCE",
+            "GF-01  //  EMERGENCY SCRAMBLE",
             self.title_font,
             42,
             (225, 242, 255),
@@ -253,7 +288,7 @@ class HangarScene:
 
         if self.system_progress >= 1.0:
             ready_text = self.medium_font.render(
-                "ALL SYSTEMS READY",
+                "LAUNCH CLEARANCE PENDING",
                 True,
                 (100, 255, 190),
             )
@@ -266,23 +301,6 @@ class HangarScene:
                 ),
             )
 
-        if self.elapsed_time >= 7.0:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - LAUNCH",
-                True,
-                (215, 235, 255),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width
-                    - continue_text.get_width()
-                    - 32,
-                    self.height
-                    - continue_text.get_height()
-                    - 24,
-                ),
-            )
 
     # Desenează progresul total al verificărilor.
     def _draw_progress_bar(self):

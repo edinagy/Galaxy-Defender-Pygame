@@ -1,5 +1,6 @@
 import math
 import random
+from array import array
 
 import pygame
 
@@ -21,12 +22,6 @@ from storm_asteroid import StormAsteroid
 from ui import draw_game_ui
 
 
-# MOD TEMPORAR DE TEST PENTRU BOSS:
-# True  = bossul final apare imediat cand incepe gameplay-ul.
-# False = jocul ruleaza normal toate cele 9 challenge-uri inainte de boss.
-TEST_BOSS_INSTANT = False
-
-
 class Gameplay:
     def __init__(
         self,
@@ -44,6 +39,8 @@ class Gameplay:
         get_music_volume,
         save_score,
         get_best_score,
+        tutorial_is_completed=lambda: True,
+        complete_tutorial=lambda: None,
     ):
         self.screen = screen
         self.width = screen.get_width()
@@ -80,6 +77,11 @@ class Gameplay:
         self.get_music_volume = get_music_volume
         self.save_score = save_score
         self.get_best_score = get_best_score
+        self.tutorial_is_completed = tutorial_is_completed
+        self.complete_tutorial_callback = complete_tutorial
+        self.tutorial_title_font = pygame.font.Font(None, 41)
+        self.tutorial_objective_font = pygame.font.Font(None, 29)
+        self.tutorial_hint_font = pygame.font.Font(None, 21)
 
         # Fundalul luptei folosește același sistem Dead Star din cinematică.
         original_background = pygame.image.load(
@@ -119,7 +121,7 @@ class Gameplay:
         self.reset()
 
     # Resetează lupta și poate porni de la scorul câștigat în campanie.
-    def reset(self, starting_score=0):
+    def reset(self, starting_score=0, tutorial_enabled=None):
         # Daca Retry este apasat dupa boss, muzica veche este oprita inainte
         # ca toate valorile luptei sa fie reconstruite.
         if getattr(self, "boss_music_started", False):
@@ -164,9 +166,8 @@ class Gameplay:
         self.spawn_delay = 60
 
         self.score = self.starting_score
-        # Valoare temporară pentru testarea tuturor evenimentelor.
-        # După ce terminăm testele, revenim la 5 vieți.
-        self.lives = 100
+        # Configurația finală a unei runde competitive.
+        self.lives = 5
         # Stage 1 este războiul actual din domeniul Dead Star. După fiecare
         # Sovereign distrus, lupta continuă într-un strat mai adânc al
         # sistemului, fără să reseteze scorul, nava sau upgrade-urile.
@@ -179,6 +180,10 @@ class Gameplay:
         self.wave = 1
         self.boss_count = 0
         self.enemies_killed = 0
+        self.run_timer_frames = 0
+        self.hull_hits_taken = 0
+        self.boss_hull_hits_at_start = 0
+        self.flawless_bosses = 0
 
         self.combo = 0
         self.combo_timer = 0
@@ -193,6 +198,22 @@ class Gameplay:
         self.combo_lost_duration = 96
         self.combo_lost_value = 0
         self.combo_break_shards = []
+
+        # Graze recompensează apropierea controlată de proiectile fără să
+        # modifice seria de eliminări. Bonusul este plafonat pentru ca
+        # scorurile din modul endless să rămână echilibrate.
+        self.graze_margin = 22
+        self.graze_chain = 0
+        self.best_graze_chain = 0
+        self.total_grazes = 0
+        self.graze_effects = []
+        self.graze_flash_timer = 0
+        self.graze_milestone_timer = 0
+        self.graze_milestone_duration = 96
+        self.graze_milestone_value = 0
+        self.graze_sound_cooldown = 0
+        self.graze_sound = self._create_graze_sound()
+        self.controller_fire_held = False
 
         # Fiecare nivel mai puternic lansează mai multe proiectile, așa că are
         # o cadență puțin mai lentă. Astfel arma evoluează fără să elimine
@@ -227,6 +248,10 @@ class Gameplay:
         self.damage_flash_duration = 18
         self.screen_shake_timer = 0
         self.screen_shake_strength = 0
+        self.energy_ready_timer = 0
+        self.energy_ready_duration = 150
+        self.breach_warning_timer = 0
+        self.breach_warning_duration = 135
 
         # Ultima viață pornește o secvență scurtă înainte de Game Over.
         self.player_destroyed = False
@@ -254,15 +279,12 @@ class Gameplay:
         self.boss_transition_phase = 1
 
         # Primul val este precedat de o scurtă introducere cinematică.
-        # Pentru testarea bossului pastram doar un singur cadru de asteptare.
-        if TEST_BOSS_INSTANT:
-            self.battle_intro_duration = 1
-        else:
-            self.battle_intro_duration = 240
+        self.battle_intro_duration = 240
         self.battle_intro_timer = (
             self.battle_intro_duration
         )
         self.first_formation_spawned = False
+        self.opening_elite_delay_timer = 0
         self.elite_waves_spawned = set()
         self.shield_carrier_waves_spawned = set()
         self.phase_hunter_waves_spawned = set()
@@ -281,12 +303,93 @@ class Gameplay:
 
         self.game_over = False
 
+        if tutorial_enabled is None:
+            tutorial_enabled = not self.tutorial_is_completed()
+        self._start_tutorial(bool(tutorial_enabled))
+
+    def _start_tutorial(self, enabled=True):
+        self.tutorial_active = bool(enabled)
+        self.tutorial_step = 0
+        self.tutorial_step_timer = 0
+        self.tutorial_finished_timer = 0
+        self.tutorial_origin = self.player.rect.center
+
+        if not self.tutorial_active:
+            return
+
+        # Training-ul folosește arena reală, însă pericolele rămân oprite până
+        # când jucătorul a încercat mișcarea, arma și Energy Pulse.
+        self.battle_intro_timer = 0
+        self.bullets.clear()
+        self.enemy_bullets.clear()
+        self.enemies.clear()
+        self.player.special_energy = 0
+
+    def _advance_tutorial(self):
+        if not self.tutorial_active:
+            return
+
+        self.tutorial_step = min(3, self.tutorial_step + 1)
+        self.tutorial_step_timer = 0
+
+        if self.tutorial_step == 1:
+            self.bullets.clear()
+            self.player_shoot_timer = 0
+        elif self.tutorial_step == 2:
+            self.player.special_energy = (
+                self.player.maximum_special_energy
+            )
+        elif self.tutorial_step == 3:
+            self.tutorial_finished_timer = 105
+
+    def _finish_tutorial(self):
+        if not self.tutorial_active:
+            return
+
+        self.tutorial_active = False
+        self.tutorial_step = 3
+        self.tutorial_step_timer = 0
+        self.tutorial_finished_timer = 0
+        self.bullets.clear()
+        self.player.special_energy = 0
+        self.player_shoot_timer = 0
+        # După confirmare rămâne numai scurta prezentare a primului wave.
+        self.battle_intro_timer = 150
+        self.complete_tutorial_callback()
+
+    def _update_tutorial(self):
+        self.tutorial_step_timer += 1
+        self.player.move(self.width, self.height)
+        self.player.update()
+
+        if self.tutorial_step >= 1:
+            self._update_player_autofire()
+
+        self._update_energy_pulse()
+        self._move_objects()
+        self._update_effects()
+        self._remove_offscreen_objects()
+
+        if self.tutorial_step == 0:
+            movement_distance = math.hypot(
+                self.player.rect.centerx - self.tutorial_origin[0],
+                self.player.rect.centery - self.tutorial_origin[1],
+            )
+            if movement_distance >= 52:
+                self._advance_tutorial()
+        elif self.tutorial_step == 1 and self.bullets:
+            self._advance_tutorial()
+        elif self.tutorial_step == 3:
+            self.tutorial_finished_timer -= 1
+            if self.tutorial_finished_timer <= 0:
+                self._finish_tutorial()
+
     def handle_event(self, event):
         if event.type != pygame.KEYDOWN:
             return None
 
         if self.game_over:
-            if event.key == pygame.K_r:
+            if event.key in (pygame.K_r, pygame.K_RETURN):
                 self.reset(self.starting_score)
             elif event.key == pygame.K_ESCAPE:
                 return "menu"
@@ -299,8 +402,18 @@ class Gameplay:
                 return "leaderboard"
             return None
 
+        if self.tutorial_active and event.key == pygame.K_F1:
+            self._finish_tutorial()
+            return None
+
         if event.key == pygame.K_e:
-            self._activate_energy_pulse()
+            pulse_activated = self._activate_energy_pulse()
+            if (
+                self.tutorial_active
+                and self.tutorial_step == 2
+                and pulse_activated
+            ):
+                self._advance_tutorial()
 
         elif event.key == pygame.K_ESCAPE:
             return "pause"
@@ -347,11 +460,18 @@ class Gameplay:
 
         # Combo-ul rămâne valoros, dar oferă numai un punct suplimentar la
         # multiplicator x3 sau x5, nu până la patru puncte la fiecare țintă.
+        previous_energy = self.player.special_energy
         combo_bonus = 1 if self.multiplier >= 3 else 0
         self.player.special_energy = min(
             self.player.maximum_special_energy,
             self.player.special_energy + base_amount + combo_bonus,
         )
+        if (
+            previous_energy < self.player.maximum_special_energy
+            and self.player.special_energy
+            >= self.player.maximum_special_energy
+        ):
+            self.energy_ready_timer = self.energy_ready_duration
 
     # Pornește unda numai când bara este complet încărcată.
     def _activate_energy_pulse(self):
@@ -373,6 +493,7 @@ class Gameplay:
             return False
 
         self.player.special_energy = 0
+        self.energy_ready_timer = 0
         self.energy_pulse_timer = self.energy_pulse_duration
         self.energy_pulse_hit_objects.clear()
         self.energy_pulse_sound.play()
@@ -408,6 +529,10 @@ class Gameplay:
                 return carrier
 
         return None
+
+    def set_controller_state(self, movement, fire_held):
+        self.player.set_controller_movement(movement)
+        self.controller_fire_held = bool(fire_held)
 
     # Extinde unda, curăță proiectile și rănește pericolele o singură dată.
     def _update_energy_pulse(self):
@@ -640,7 +765,10 @@ class Gameplay:
     def _update_player_autofire(self):
         pressed_keys = pygame.key.get_pressed()
 
-        if not pressed_keys[pygame.K_SPACE]:
+        if (
+            not pressed_keys[pygame.K_SPACE]
+            and not self.controller_fire_held
+        ):
             # Dupa eliberare, urmatoarea apasare trage imediat.
             self.player_shoot_timer = 0
             return
@@ -660,12 +788,18 @@ class Gameplay:
     def update(self):
         self.background_timer += 1
 
+        if self.energy_ready_timer > 0:
+            self.energy_ready_timer -= 1
+        if self.breach_warning_timer > 0:
+            self.breach_warning_timer -= 1
+
         # Cooldown-ul scade inclusiv în momentele scurte de tranziție.
         if self.weapon_drop_cooldown > 0:
             self.weapon_drop_cooldown -= 1
 
         # Efectele vizuale expiră chiar dacă lupta tocmai s-a încheiat.
         self._update_combo_feedback()
+        self._update_graze_feedback()
 
         if self.damage_flash_timer > 0:
             self.damage_flash_timer -= 1
@@ -715,6 +849,10 @@ class Gameplay:
             self._update_effects()
             return
 
+        if self.tutorial_active:
+            self._update_tutorial()
+            return
+
         self.player.move(
             self.width,
             self.height,
@@ -727,10 +865,7 @@ class Gameplay:
             self.battle_intro_timer -= 1
 
             if self.battle_intro_timer == 0:
-                if TEST_BOSS_INSTANT:
-                    self._start_final_boss_if_ready()
-                else:
-                    self._spawn_first_wave_formation()
+                self._spawn_first_wave_formation()
 
             return
 
@@ -752,10 +887,12 @@ class Gameplay:
             return
 
         self.wave_elapsed_timer += 1
+        self.run_timer_frames += 1
 
         self._update_player_autofire()
         self._update_combo()
         self._update_difficulty()
+        self._update_opening_elite()
         self._update_space_events()
         self._update_allied_reinforcements()
         self._update_drone_swarm()
@@ -768,6 +905,7 @@ class Gameplay:
         self._update_final_boss()
         self._update_energy_pulse()
         self._move_objects()
+        self._update_graze_system()
         self._update_effects()
         self._remove_offscreen_objects()
         self._handle_collisions()
@@ -839,6 +977,12 @@ class Gameplay:
         )
         self._play_new_event_sound()
 
+        for graze_position in (
+            self.space_event_manager
+            .consume_phase_storm_grazes()
+        ):
+            self._register_graze(graze_position)
+
         phase_storm_reward = (
             self.space_event_manager
             .consume_phase_storm_reward()
@@ -892,6 +1036,7 @@ class Gameplay:
     ):
         # Shield-ul absoarbe prima lovitură fără să consume o viață.
         if self.player.absorb_shield_hit():
+            self._break_graze_chain()
             self._trigger_screen_shake(4, 7)
             return False
 
@@ -900,6 +1045,7 @@ class Gameplay:
             return False
 
         self.lives -= 1
+        self.hull_hits_taken += 1
         # O lovitură reală scade arma cu un singur nivel.
         # Shield-ul și cadrele de invulnerabilitate nu produc downgrade.
         self.player.downgrade_weapon()
@@ -907,6 +1053,7 @@ class Gameplay:
         # 105 cadre înseamnă aproximativ 1,75 secunde la 60 FPS.
         self.player.invincible_timer = 105
         self._break_combo()
+        self._break_graze_chain()
 
         self.damage_flash_timer = self.damage_flash_duration
         self._trigger_screen_shake(
@@ -1593,12 +1740,24 @@ class Gameplay:
                 )
             )
 
-        # Primul wave primeste elita imediat dupa formatia introductiva.
-        self._spawn_elite_for_wave()
+        # În Stage 1, prima elită intră după ce jucătorul a avut timp să
+        # citească formația și HUD-ul. Stage-urile următoare pornesc direct.
+        if self.stage == 1 and self.wave == 1:
+            self.opening_elite_delay_timer = 480
+        else:
+            self._spawn_elite_for_wave()
         self._spawn_shield_carrier_for_wave()
         self._spawn_phase_hunter_for_wave()
         self.first_formation_spawned = True
         self.enemy_spawn_timer = 0
+
+    def _update_opening_elite(self):
+        if self.opening_elite_delay_timer <= 0:
+            return
+
+        self.opening_elite_delay_timer -= 1
+        if self.opening_elite_delay_timer == 0:
+            self._spawn_elite_for_wave()
 
     # Creeaza exact o elita la inceputul fiecarui wave.
     def _spawn_elite_for_wave(self):
@@ -1615,6 +1774,7 @@ class Gameplay:
                 self.stage,
             )
         )
+
         self.elite_waves_spawned.add(self.wave)
 
     # Stage 2 introduce un Carrier la fiecare wave impar; Stage 3+ la fiecare.
@@ -1708,6 +1868,180 @@ class Gameplay:
             shard["life"] -= 1
             if shard["life"] <= 0:
                 self.combo_break_shards.remove(shard)
+
+    # Creează un sunet foarte scurt direct în memorie, fără un asset separat.
+    # Dacă mixerul nu este disponibil, sistemul continuă fără audio.
+    @staticmethod
+    def _create_graze_sound():
+        mixer_settings = pygame.mixer.get_init()
+        if mixer_settings is None:
+            return None
+
+        sample_rate, sample_format, channels = mixer_settings
+        if abs(sample_format) != 16:
+            return None
+
+        sample_count = max(1, int(sample_rate * 0.055))
+        samples = array("h")
+        phase = 0.0
+        for sample_index in range(sample_count):
+            progress = sample_index / sample_count
+            frequency = 920 + progress * 1380
+            phase += math.tau * frequency / sample_rate
+            envelope = (1.0 - progress) ** 1.8
+            value = int(math.sin(phase) * 7200 * envelope)
+            for _channel in range(channels):
+                samples.append(value)
+
+        try:
+            sound = pygame.mixer.Sound(buffer=samples.tobytes())
+            sound.set_volume(0.16)
+            return sound
+        except pygame.error:
+            return None
+
+    @staticmethod
+    def _get_graze_tier(chain_value):
+        return min(5, 1 + max(0, int(chain_value)) // 10)
+
+    def _register_graze(self, position):
+        if (
+            self.player.invincible
+            or self.player_destroyed
+            or self.game_over
+            or self.victory
+        ):
+            return 0
+
+        self.graze_chain += 1
+        self.total_grazes += 1
+        self.best_graze_chain = max(
+            self.best_graze_chain,
+            self.graze_chain,
+        )
+        graze_tier = self._get_graze_tier(self.graze_chain)
+        awarded_score = self._award_score(
+            10 * graze_tier,
+            apply_combo=True,
+        )
+        self._charge_energy_pulse(1)
+
+        effect_life = 40
+        # Mai multe proiectile pot trece simultan pe lângă navă. Le grupăm
+        # într-un singur popup pentru a păstra arena lizibilă.
+        if (
+            self.graze_effects
+            and self.graze_effects[-1]["life"]
+            == self.graze_effects[-1]["maximum_life"]
+        ):
+            effect = self.graze_effects[-1]
+            previous_count = effect["count"]
+            effect["count"] += 1
+            effect["points"] += awarded_score
+            effect["x"] = (
+                effect["x"] * previous_count + float(position[0])
+            ) / effect["count"]
+            effect["y"] = (
+                effect["y"] * previous_count + float(position[1])
+            ) / effect["count"]
+            if len(effect["angles"]) < 9:
+                effect["angles"].append(random.uniform(0, math.tau))
+        else:
+            self.graze_effects.append(
+                {
+                    "x": float(position[0]),
+                    "y": float(position[1]),
+                    "life": effect_life,
+                    "maximum_life": effect_life,
+                    "points": awarded_score,
+                    "count": 1,
+                    "angles": [
+                        random.uniform(0, math.tau)
+                        for _ in range(5)
+                    ],
+                }
+            )
+        if len(self.graze_effects) > 28:
+            self.graze_effects.pop(0)
+
+        self.graze_flash_timer = 24
+        if self.graze_chain in (10, 25, 50, 100, 200):
+            self.graze_milestone_value = self.graze_chain
+            self.graze_milestone_timer = self.graze_milestone_duration
+
+        if self.graze_sound is not None and self.graze_sound_cooldown <= 0:
+            self.graze_sound.play()
+            self.graze_sound_cooldown = 5
+
+        return awarded_score
+
+    def _break_graze_chain(self):
+        self.graze_chain = 0
+        self.graze_milestone_timer = 0
+
+    def _update_graze_feedback(self):
+        if self.graze_flash_timer > 0:
+            self.graze_flash_timer -= 1
+        if self.graze_milestone_timer > 0:
+            self.graze_milestone_timer -= 1
+        if self.graze_sound_cooldown > 0:
+            self.graze_sound_cooldown -= 1
+
+        for effect in self.graze_effects[:]:
+            effect["life"] -= 1
+            effect["y"] -= 0.32
+            if effect["life"] <= 0:
+                self.graze_effects.remove(effect)
+
+    def _try_graze_projectile(
+        self,
+        projectile,
+        projectile_rect,
+        player_hitbox,
+    ):
+        if getattr(projectile, "graze_registered", False):
+            return False
+        if projectile_rect.colliderect(player_hitbox):
+            return False
+
+        graze_zone = player_hitbox.inflate(
+            self.graze_margin * 2,
+            self.graze_margin * 2,
+        )
+        if not projectile_rect.colliderect(graze_zone):
+            return False
+
+        projectile.graze_registered = True
+        self._register_graze(projectile_rect.center)
+        return True
+
+    # Laserele și asteroizii sunt excluși deoarece suprafața lor mare ar
+    # acorda puncte prea ușor. Rachetele contează numai după armare.
+    def _update_graze_system(self):
+        if self.player.invincible or self.player_destroyed:
+            return
+
+        player_hitbox = self.player.get_hitbox()
+        projectile_groups = (
+            self.enemy_bullets,
+            self.boss_projectiles,
+            self.crossfire_bullets,
+        )
+        for projectile_group in projectile_groups:
+            for projectile in projectile_group:
+                self._try_graze_projectile(
+                    projectile,
+                    projectile.rect,
+                    player_hitbox,
+                )
+
+        for missile in self.homing_missiles:
+            if missile.is_dangerous():
+                self._try_graze_projectile(
+                    missile,
+                    missile.collision_rect,
+                    player_hitbox,
+                )
 
     @staticmethod
     def _get_combo_tier(combo_value):
@@ -2169,11 +2503,7 @@ class Gameplay:
         if self.boss_spawned or self.victory:
             return
 
-        # Modul temporar de test sare peste cele noua challenge-uri.
-        if (
-            not TEST_BOSS_INSTANT
-            and not self.space_event_manager.final_boss_is_ready()
-        ):
+        if not self.space_event_manager.final_boss_is_ready():
             return
 
         # Curatam arena pentru ca intrarea bossului sa fie clara si corecta.
@@ -2194,6 +2524,7 @@ class Gameplay:
         )
         self.boss_spawned = True
         self.boss_defeated = False
+        self.boss_hull_hits_at_start = self.hull_hits_taken
         self.boss_projectiles.clear()
         self._start_boss_music()
 
@@ -2303,6 +2634,19 @@ class Gameplay:
         self.score += awarded_score
         return awarded_score
 
+    def get_run_summary(self):
+        return {
+            "score": max(0, int(self.score)),
+            "stage": max(1, int(self.stage)),
+            "wave": max(1, int(self.wave)),
+            "enemies_killed": max(0, int(self.enemies_killed)),
+            "bosses_destroyed": max(0, int(self.boss_count)),
+            "best_combo": max(0, int(self.best_combo)),
+            "best_graze": max(0, int(self.best_graze_chain)),
+            "total_grazes": max(0, int(self.total_grazes)),
+            "duration_seconds": max(0, int(self.run_timer_frames // 60)),
+        }
+
     # Stage-urile mai adânci schimbă atmosfera fără să necesite încă un asset.
     def _apply_stage_background_tint(self):
         tint_palette = (
@@ -2365,6 +2709,7 @@ class Gameplay:
         self.wave_transition_timer = 0
         self.enemy_spawn_timer = 0
         self.first_formation_spawned = False
+        self.opening_elite_delay_timer = 0
         self.elite_waves_spawned.clear()
         self.shield_carrier_waves_spawned.clear()
         self.phase_hunter_waves_spawned.clear()
@@ -2501,8 +2846,13 @@ class Gameplay:
                 continue
 
             self.lives -= 1
+            self.hull_hits_taken += 1
             self.player.downgrade_weapon()
             self._break_combo()
+            self._break_graze_chain()
+            self.damage_flash_timer = self.damage_flash_duration
+            self.breach_warning_timer = self.breach_warning_duration
+            self._trigger_screen_shake(7, 11)
 
     def _handle_collisions(self):
         self._player_bullet_missile_collisions()
@@ -3171,6 +3521,8 @@ class Gameplay:
         self.boss_projectiles.clear()
         self.enemy_bullets.clear()
         self.boss_count += 1
+        if self.hull_hits_taken == self.boss_hull_hits_at_start:
+            self.flawless_bosses += 1
         # Vechiul sunet greu functioneaza mai bine ca impact al unei nave distruse.
         # Il redam mai rar, ca luptele aglomerate sa nu devina zgomotoase.
         if random.random() < 0.55:
@@ -3530,6 +3882,7 @@ class Gameplay:
 
         # Unda aparține arenei și este desenată înainte de aplicarea shake-ului.
         self._draw_energy_pulse()
+        self._draw_graze_feedback()
 
         # Camera este deplasată numai după ce întreaga arenă a fost desenată.
         # HUD-ul este desenat ulterior și rămâne stabil, ca într-un joc premium.
@@ -3546,6 +3899,9 @@ class Gameplay:
                 self.player,
                 self.stage,
                 self.combo,
+                self.graze_chain,
+                self.total_grazes,
+                self.graze_flash_timer,
             )
             self._draw_victory()
         elif not self.game_over:
@@ -3559,7 +3915,12 @@ class Gameplay:
                 self.player,
                 self.stage,
                 self.combo,
+                self.graze_chain,
+                self.total_grazes,
+                self.graze_flash_timer,
             )
+
+            self._draw_combat_status_alert()
 
             if self.battle_intro_timer > 0:
                 self._draw_battle_intro()
@@ -3573,12 +3934,245 @@ class Gameplay:
             if self.stage_transition_timer > 0:
                 self._draw_stage_transition()
 
+            if self.tutorial_active:
+                self._draw_tutorial()
+
             self._draw_combo_feedback()
         else:
             self._draw_game_over()
 
         # Flash-ul este ultimul strat și colorează subtil tot ecranul la impact.
         self._draw_damage_flash()
+
+    def _draw_combat_status_alert(self):
+        if self.tutorial_active:
+            return
+
+        if self.breach_warning_timer > 0:
+            title_text = "DEFENSE LINE BREACHED"
+            detail_text = "HULL INTEGRITY REDUCED"
+            accent = (255, 70, 95)
+            visibility = min(
+                1.0,
+                self.breach_warning_timer / 22.0,
+            )
+        elif self.energy_ready_timer > 0:
+            title_text = "ENERGY PULSE READY"
+            detail_text = "PRESS E / X TO DISCHARGE"
+            accent = (195, 95, 255)
+            visibility = min(
+                1.0,
+                self.energy_ready_timer / 22.0,
+            )
+        else:
+            return
+
+        panel_rect = pygame.Rect(
+            self.width // 2 - 225,
+            20,
+            450,
+            62,
+        )
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (5, 10, 26, int(218 * visibility)),
+            panel.get_rect(),
+            border_radius=12,
+        )
+        pygame.draw.rect(
+            panel,
+            (*accent, int(220 * visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=12,
+        )
+        pygame.draw.line(
+            panel,
+            (*accent, int(245 * visibility)),
+            (18, 1),
+            (panel_rect.width - 18, 1),
+            3,
+        )
+        title = self.tutorial_objective_font.render(
+            title_text,
+            True,
+            (245, 248, 255),
+        )
+        detail = self.tutorial_hint_font.render(
+            detail_text,
+            True,
+            accent,
+        )
+        title.set_alpha(int(255 * visibility))
+        detail.set_alpha(int(255 * visibility))
+        panel.blit(
+            title,
+            (panel_rect.width // 2 - title.get_width() // 2, 8),
+        )
+        panel.blit(
+            detail,
+            (panel_rect.width // 2 - detail.get_width() // 2, 38),
+        )
+        self.screen.blit(panel, panel_rect.topleft)
+
+    def _draw_tutorial(self):
+        tutorial_steps = (
+            (
+                "NAVIGATION CALIBRATION",
+                "Move the ship and confirm full directional control.",
+                "WASD / ARROWS / LEFT STICK",
+                (75, 215, 255),
+            ),
+            (
+                "PRIMARY WEAPONS ONLINE",
+                "Fire the forward cannons. Hold the control for autofire.",
+                "SPACE / A / RIGHT TRIGGER",
+                (255, 185, 75),
+            ),
+            (
+                "ENERGY PULSE CHARGED",
+                "Discharge the reactor pulse to clear nearby threats.",
+                "E / X BUTTON",
+                (185, 105, 255),
+            ),
+            (
+                "COMBAT SYSTEMS ONLINE",
+                "Calibration complete. Hostile formation approaching.",
+                "WAVE 1 INBOUND",
+                (80, 235, 175),
+            ),
+        )
+        title_text, objective_text, control_text, accent = tutorial_steps[
+            self.tutorial_step
+        ]
+        visibility = min(1.0, self.tutorial_step_timer / 12.0)
+        pulse = 0.5 + 0.5 * math.sin(self.background_timer * 0.09)
+
+        # Marcajul din jurul navei indică imediat obiectul controlat, fără o
+        # săgeată mare care ar acoperi proiectilele în rundele următoare.
+        marker = pygame.Surface((150, 150), pygame.SRCALPHA)
+        marker_center = (75, 75)
+        marker_radius = int(54 + pulse * 5)
+        pygame.draw.circle(
+            marker,
+            (*accent, int(95 * visibility)),
+            marker_center,
+            marker_radius,
+            2,
+        )
+        for angle in (0, math.pi / 2, math.pi, math.pi * 1.5):
+            inner = (
+                int(75 + math.cos(angle) * (marker_radius - 9)),
+                int(75 + math.sin(angle) * (marker_radius - 9)),
+            )
+            outer = (
+                int(75 + math.cos(angle) * (marker_radius + 8)),
+                int(75 + math.sin(angle) * (marker_radius + 8)),
+            )
+            pygame.draw.line(
+                marker,
+                (*accent, int(220 * visibility)),
+                inner,
+                outer,
+                3,
+            )
+        self.screen.blit(
+            marker,
+            (
+                self.player.rect.centerx - 75,
+                self.player.rect.centery - 75,
+            ),
+        )
+
+        panel_rect = pygame.Rect(64, 510, self.width - 128, 154)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (4, 12, 31, int(238 * visibility)),
+            panel.get_rect(),
+            border_radius=15,
+        )
+        pygame.draw.rect(
+            panel,
+            (*accent, int(205 * visibility)),
+            panel.get_rect(),
+            2,
+            border_radius=15,
+        )
+        pygame.draw.line(
+            panel,
+            (*accent, int(235 * visibility)),
+            (18, 1),
+            (panel_rect.width - 18, 1),
+            3,
+        )
+
+        link_label = self.tutorial_hint_font.render(
+            "GF-01 TRAINING LINK  //  FIRST DEPLOYMENT",
+            True,
+            accent,
+        )
+        title = self.tutorial_title_font.render(
+            title_text,
+            True,
+            (242, 249, 255),
+        )
+        objective = self.tutorial_objective_font.render(
+            objective_text,
+            True,
+            (185, 205, 225),
+        )
+        control = self.tutorial_objective_font.render(
+            control_text,
+            True,
+            accent,
+        )
+        skip = self.tutorial_hint_font.render(
+            "F1 / Y  //  SKIP TRAINING",
+            True,
+            (100, 125, 155),
+        )
+        for text_surface in (link_label, title, objective, control, skip):
+            text_surface.set_alpha(int(255 * visibility))
+
+        panel.blit(link_label, (24, 16))
+        panel.blit(title, (24, 43))
+        panel.blit(objective, (26, 87))
+        panel.blit(
+            control,
+            (
+                panel_rect.width - control.get_width() - 26,
+                56,
+            ),
+        )
+        panel.blit(
+            skip,
+            (
+                panel_rect.width - skip.get_width() - 26,
+                105,
+            ),
+        )
+
+        for step_index in range(4):
+            step_x = 26 + step_index * 58
+            is_complete = step_index < self.tutorial_step
+            is_active = step_index == self.tutorial_step
+            step_color = (
+                accent
+                if is_active
+                else (80, 220, 175)
+                if is_complete
+                else (55, 75, 105)
+            )
+            pygame.draw.rect(
+                panel,
+                (*step_color, int((220 if is_active else 115) * visibility)),
+                (step_x, 126, 44, 6),
+                border_radius=3,
+            )
+
+        self.screen.blit(panel, panel_rect.topleft)
 
     # Desenează frontul segmentat, ecourile și particulele abilității.
     def _draw_energy_pulse(self):
@@ -3733,6 +4327,101 @@ class Gameplay:
 
         # Blit normal: păstrează transparența și nu acoperă arena ori gloanțele.
         self.screen.blit(pulse_surface, (0, 0))
+
+    # Desenează confirmarea locală și milestone-urile seriei de eschive.
+    def _draw_graze_feedback(self):
+        if not self.graze_effects and self.graze_milestone_timer <= 0:
+            return
+
+        overlay = pygame.Surface(
+            (self.width, self.height),
+            pygame.SRCALPHA,
+        )
+        accent_color = (75, 235, 255)
+
+        for effect in self.graze_effects:
+            life_ratio = effect["life"] / effect["maximum_life"]
+            progress = 1.0 - life_ratio
+            center = (int(effect["x"]), int(effect["y"]))
+            radius = int(12 + progress * 25)
+            pygame.draw.circle(
+                overlay,
+                (*accent_color, int(175 * life_ratio)),
+                center,
+                radius,
+                2,
+            )
+            for angle in effect["angles"]:
+                spark_distance = 10 + progress * 30
+                spark_center = (
+                    int(center[0] + math.cos(angle) * spark_distance),
+                    int(center[1] + math.sin(angle) * spark_distance),
+                )
+                pygame.draw.circle(
+                    overlay,
+                    (190, 250, 255, int(220 * life_ratio)),
+                    spark_center,
+                    2,
+                )
+
+            if effect["life"] > 12:
+                graze_prefix = (
+                    f"GRAZE x{effect['count']}"
+                    if effect["count"] > 1
+                    else "GRAZE"
+                )
+                text = self.combo_subtitle_font.render(
+                    f"{graze_prefix}  +{effect['points']}",
+                    True,
+                    (185, 250, 255),
+                )
+                text.set_alpha(int(245 * min(1.0, life_ratio * 2.0)))
+                overlay.blit(
+                    text,
+                    (
+                        center[0] - text.get_width() // 2,
+                        center[1] - 38 - int(progress * 10),
+                    ),
+                )
+
+        if self.graze_milestone_timer > 0:
+            elapsed = (
+                self.graze_milestone_duration
+                - self.graze_milestone_timer
+            )
+            visibility = min(1.0, elapsed / 10) * min(
+                1.0,
+                self.graze_milestone_timer / 22,
+            )
+            milestone_text = self.combo_title_font.render(
+                "GRAZE CHAIN",
+                True,
+                accent_color,
+            )
+            tier = self._get_graze_tier(self.graze_milestone_value)
+            milestone_value = self.combo_subtitle_font.render(
+                f"G{self.graze_milestone_value}  //  RISK BONUS x{tier}",
+                True,
+                (220, 250, 255),
+            )
+            milestone_text.set_alpha(int(255 * visibility))
+            milestone_value.set_alpha(int(255 * visibility))
+            overlay.blit(
+                milestone_text,
+                (
+                    self.width // 2 - milestone_text.get_width() // 2,
+                    275,
+                ),
+            )
+            overlay.blit(
+                milestone_value,
+                (
+                    self.width // 2 - milestone_value.get_width() // 2,
+                    332,
+                ),
+            )
+
+        self.screen.blit(overlay, (0, 0))
 
     # Deplasează pentru câteva cadre imaginea arenei în direcții aleatoare.
     def _apply_screen_shake(self):
@@ -4720,14 +5409,17 @@ class Gameplay:
         displayed_wave = max(1, int(self.wave * count_progress))
         displayed_stage = max(1, int(self.stage * count_progress))
         displayed_best_combo = int(self.best_combo * count_progress)
+        displayed_best_graze = int(
+            self.best_graze_chain * count_progress
+        )
         displayed_best = int(best_score * count_progress)
         statistics = (
             ("FINAL COMBAT SCORE", self._format_result_number(displayed_score)),
             (
-                "STAGE / WAVE  //  BEST COMBO",
+                "STAGE / WAVE  //  BEST COMBO / GRAZE",
                 (
                     f"{displayed_stage:02d}/{displayed_wave:02d}"
-                    f"  //  C{displayed_best_combo}"
+                    f"  //  C{displayed_best_combo} / G{displayed_best_graze}"
                 ),
             ),
             ("GALACTIC BEST SCORE", self._format_result_number(displayed_best)),

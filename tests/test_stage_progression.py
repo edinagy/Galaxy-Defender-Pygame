@@ -10,6 +10,7 @@ import pygame
 from boss import Boss
 from bullet import Bullet
 from enemy import Enemy
+from enemy_bullet import EnemyBullet
 from gameplay import Gameplay
 
 
@@ -103,6 +104,92 @@ class StageProgressionTests(unittest.TestCase):
         gameplay.update()
         self.assertEqual(gameplay.stage, 3)
         self.assertEqual(gameplay.wave, 1)
+
+    def test_first_run_tutorial_requires_move_fire_and_energy_pulse(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        completions = []
+        gameplay.complete_tutorial_callback = lambda: completions.append(True)
+        gameplay.reset(tutorial_enabled=True)
+
+        self.assertTrue(gameplay.tutorial_active)
+        self.assertEqual(gameplay.battle_intro_timer, 0)
+
+        gameplay.player.x += 60
+        gameplay.player.rect.x = int(gameplay.player.x)
+        gameplay._update_tutorial()
+        self.assertEqual(gameplay.tutorial_step, 1)
+
+        gameplay.bullets.append(
+            Bullet(gameplay.player.rect.centerx, gameplay.player.rect.top)
+        )
+        gameplay._update_tutorial()
+        self.assertEqual(gameplay.tutorial_step, 2)
+        self.assertEqual(
+            gameplay.player.special_energy,
+            gameplay.player.maximum_special_energy,
+        )
+
+        gameplay.handle_event(
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e)
+        )
+        self.assertEqual(gameplay.tutorial_step, 3)
+        gameplay.tutorial_finished_timer = 1
+        gameplay._update_tutorial()
+
+        self.assertFalse(gameplay.tutorial_active)
+        self.assertEqual(completions, [True])
+        self.assertGreater(gameplay.battle_intro_timer, 0)
+
+    def test_first_stage_delays_the_opening_elite_without_removing_it(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        gameplay._spawn_first_wave_formation()
+
+        self.assertFalse(
+            any(enemy.enemy_type == "elite" for enemy in gameplay.enemies)
+        )
+        self.assertEqual(gameplay.opening_elite_delay_timer, 480)
+
+        gameplay.opening_elite_delay_timer = 1
+        gameplay._update_opening_elite()
+        self.assertTrue(
+            any(enemy.enemy_type == "elite" for enemy in gameplay.enemies)
+        )
+
+    def test_tutorial_can_be_skipped_by_keyboard_or_controller_mapping(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        completions = []
+        gameplay.complete_tutorial_callback = lambda: completions.append(True)
+        gameplay.reset(tutorial_enabled=True)
+
+        gameplay.handle_event(
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F1)
+        )
+
+        self.assertFalse(gameplay.tutorial_active)
+        self.assertEqual(completions, [True])
+        self.assertEqual(gameplay.battle_intro_timer, 150)
+
+    def test_energy_ready_and_breach_feedback_are_triggered(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        gameplay.player.special_energy = 99
+        gameplay._charge_energy_pulse(1)
+        self.assertEqual(
+            gameplay.energy_ready_timer,
+            gameplay.energy_ready_duration,
+        )
+
+        escaped_enemy = Enemy(100, gameplay.height + 20, "scout", 1, 1)
+        escaped_enemy.y = gameplay.height + escaped_enemy.image.get_height()
+        escaped_enemy.rect.y = int(escaped_enemy.y)
+        gameplay.enemies.append(escaped_enemy)
+        lives_before = gameplay.lives
+        gameplay._remove_offscreen_objects()
+
+        self.assertEqual(gameplay.lives, lives_before - 1)
+        self.assertEqual(
+            gameplay.breach_warning_timer,
+            gameplay.breach_warning_duration,
+        )
 
     def test_stage_two_scales_enemies_and_boss(self):
         stage_one_enemy = Enemy(0, -100, "fighter", 1, 1)
@@ -286,6 +373,100 @@ class StageProgressionTests(unittest.TestCase):
         self.assertFalse(damage_was_applied)
         self.assertEqual(gameplay.combo, 14)
         self.assertEqual(gameplay.multiplier, 2)
+
+    def test_graze_rewards_each_projectile_only_once(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        player_hitbox = gameplay.player.get_hitbox()
+        bullet = EnemyBullet(0, 0)
+        bullet.rect = pygame.Rect(
+            player_hitbox.right + 5,
+            player_hitbox.centery - 4,
+            8,
+            8,
+        )
+        gameplay.enemy_bullets = [bullet]
+        starting_score = gameplay.score
+        starting_energy = gameplay.player.special_energy
+
+        gameplay._update_graze_system()
+
+        self.assertEqual(gameplay.graze_chain, 1)
+        self.assertEqual(gameplay.total_grazes, 1)
+        self.assertGreater(gameplay.score, starting_score)
+        self.assertGreater(
+            gameplay.player.special_energy,
+            starting_energy,
+        )
+        first_rewarded_score = gameplay.score
+
+        gameplay._update_graze_system()
+        self.assertEqual(gameplay.graze_chain, 1)
+        self.assertEqual(gameplay.total_grazes, 1)
+        self.assertEqual(gameplay.score, first_rewarded_score)
+
+    def test_graze_chain_increases_capped_risk_bonus(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        gameplay.combo = 10
+        gameplay._update_multiplier()
+        gameplay.graze_chain = 9
+        starting_score = gameplay.score
+
+        awarded_score = gameplay._register_graze((640, 360))
+
+        self.assertEqual(gameplay.graze_chain, 10)
+        self.assertEqual(gameplay.best_graze_chain, 10)
+        self.assertEqual(gameplay._get_graze_tier(10), 2)
+        # 10 puncte * risk x2 * combo x2.
+        self.assertEqual(awarded_score, 40)
+        self.assertEqual(gameplay.score - starting_score, 40)
+        self.assertGreater(gameplay.graze_milestone_timer, 0)
+        self.assertEqual(gameplay._get_graze_tier(999), 5)
+
+    def test_shield_breaks_graze_chain_but_preserves_combat_combo(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        gameplay.combo = 14
+        gameplay.multiplier = 2
+        gameplay.graze_chain = 18
+        gameplay.best_graze_chain = 18
+        gameplay.player.activate_shield(300)
+
+        damage_was_applied = gameplay._damage_player()
+
+        self.assertFalse(damage_was_applied)
+        self.assertEqual(gameplay.combo, 14)
+        self.assertEqual(gameplay.multiplier, 2)
+        self.assertEqual(gameplay.graze_chain, 0)
+        self.assertEqual(gameplay.best_graze_chain, 18)
+
+    def test_phase_storm_projectile_can_award_graze(self):
+        gameplay, _saved_scores = self.create_gameplay()
+        manager = gameplay.space_event_manager
+        manager.reset(2)
+        event = manager.phase_storm
+        manager.current_event = event
+        event.state = "active"
+        event.active_timer = 300
+        event.volley_timer = 999
+        event.volley_count = event.total_volleys
+        event.portals = []
+        player_hitbox = gameplay.player.get_hitbox()
+        event.projectiles = [
+            {
+                "x": float(player_hitbox.right + 12),
+                "y": float(player_hitbox.centery),
+                "dx": 0.0,
+                "dy": 0.0,
+                "radius": 5,
+                "trail": [],
+                "grazed": False,
+            }
+        ]
+
+        gameplay._update_space_events()
+
+        self.assertEqual(gameplay.graze_chain, 1)
+        self.assertEqual(gameplay.total_grazes, 1)
+        self.assertTrue(event.projectiles[0]["grazed"])
 
     def test_phase_storm_is_exclusive_to_stage_two_and_beyond(self):
         gameplay, _saved_scores = self.create_gameplay()

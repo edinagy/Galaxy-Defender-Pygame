@@ -2,9 +2,49 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata ultimei secvențe cinematice înainte de lupta principală.
 SCENE_DURATION = 13.0
+
+STORY_CUES = (
+    (
+        0.5,
+        3.2,
+        "SHIP AI",
+        "Transit complete. These coordinates do not exist in Coalition records.",
+        "SENSOR REBOOT",
+    ),
+    (
+        3.3,
+        5.7,
+        "SHIP AI",
+        "Source signal confirmed. The structure ahead is not a natural body.",
+        "THREAT ANALYSIS",
+    ),
+    (
+        5.8,
+        7.9,
+        "COMMANDER VALE",
+        "GF-01... if you can hear me... find a way home.",
+        "FRAGMENTED UPLINK",
+    ),
+    (
+        8.0,
+        10.2,
+        "SHIP AI",
+        "Hostile target locks detected. Five... twelve... twenty-seven.",
+        "EMERGENCY",
+    ),
+    (
+        10.3,
+        12.5,
+        "SHIP AI",
+        "No return vector. Weapons restrictions removed.",
+        "COMBAT AUTHORITY // LOCAL",
+    ),
+)
 
 
 # Reprezintă intrarea în sistemul Dead Star și începutul războiului.
@@ -69,6 +109,7 @@ class DeadStarScene:
         self.medium_font = pygame.font.Font(None, 43)
         self.title_font = pygame.font.Font(None, 75)
         self.logo_font = pygame.font.Font(None, 112)
+        self.cinematic = CinematicOverlay()
 
         self.enemy_formation = [
             {
@@ -177,6 +218,18 @@ class DeadStarScene:
         self._draw_enemy_formation()
         self._draw_story_titles()
         self._draw_contact_interface()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            0.45 + self.enemy_reveal_progress * 0.8,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 08  //  UNRECORDED SYSTEM",
+            "NO RETURN VECTOR" if self.elapsed_time >= 10.3 else "DEEP SPACE CONTACT",
+        )
         self._draw_fade()
 
     # Deplasează lent fundalul pentru a sugera apropierea de Dead Star.
@@ -360,25 +413,25 @@ class DeadStarScene:
     def _draw_story_titles(self):
         if self.elapsed_time < 4.0:
             self._draw_centered_text(
-                "THE DEAD STAR'S DOMAIN",
+                "UNRECORDED SYSTEM",
                 self.title_font,
                 48,
                 (240, 225, 225),
             )
             subtitle = (
-                "ENEMY TERRITORY CONFIRMED"
+                "DISTANCE FROM HOMEWORLD: UNKNOWN"
             )
             subtitle_color = (255, 115, 120)
 
         elif self.elapsed_time < 8.4:
             self._draw_centered_text(
-                "THE WAR BEGINS",
+                "THE SIGNAL HAS A SOURCE",
                 self.title_font,
                 48,
                 (255, 115, 120),
             )
             subtitle = (
-                "HOSTILE FLEET APPROACHING"
+                "HOSTILE LOCKS MULTIPLYING"
             )
             subtitle_color = (255, 185, 135)
 
@@ -390,7 +443,7 @@ class DeadStarScene:
                 (225, 244, 255),
             )
             subtitle = (
-                "DEFEND THE LAST LIGHT"
+                "NO ORDERS  //  NO WAY HOME"
             )
             subtitle_color = (115, 220, 255)
 
@@ -413,20 +466,6 @@ class DeadStarScene:
             ),
         )
 
-        if self.elapsed_time >= 10.0:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - BEGIN",
-                True,
-                (225, 235, 245),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width // 2
-                    - continue_text.get_width() // 2,
-                    self.height - 58,
-                ),
-            )
 
     # Desenează numărul contactelor inamice în faza de confruntare.
     def _draw_contact_interface(self):

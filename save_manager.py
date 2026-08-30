@@ -2,10 +2,13 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
+from runtime_paths import user_data_path
+
 
 # Valorile folosite atunci când jocul este pornit pentru prima dată.
 DEFAULT_SAVE_DATA = {
     "intro_completed": False,
+    "tutorial_completed": False,
     "current_scene": "planet",
     "checkpoint": 0,
     "campaign_score": 0,
@@ -14,19 +17,40 @@ DEFAULT_SAVE_DATA = {
     "sound_volume": 1.0,
     "fullscreen": False,
     "resolution": [1280, 720],
+    "unlocked_achievements": [],
 }
+
+PROGRESS_KEYS = (
+    "intro_completed",
+    "tutorial_completed",
+    "current_scene",
+    "checkpoint",
+    "campaign_score",
+    "highest_score",
+    "unlocked_achievements",
+)
+SETTINGS_KEYS = (
+    "music_volume",
+    "sound_volume",
+    "fullscreen",
+    "resolution",
+)
 
 
 # Clasa responsabilă de încărcarea și salvarea progresului jucătorului.
 class SaveManager:
 
     # Stabilește locația fișierului save.json și încarcă progresul existent.
-    def __init__(self, save_path=None):
+    def __init__(self, save_path=None, settings_path=None):
         if save_path is None:
-            project_folder = Path(__file__).resolve().parent
-            save_path = project_folder / "data" / "save.json"
+            save_path = user_data_path("save.json")
 
         self.save_path = Path(save_path)
+        self.settings_path = (
+            Path(settings_path)
+            if settings_path is not None
+            else self.save_path.with_name("settings.json")
+        )
         self.data = self.load()
 
     # Creează o copie nouă a valorilor implicite.
@@ -38,44 +62,37 @@ class SaveManager:
     # Încarcă salvarea existentă.
     # Dacă fișierul lipsește, este gol sau este corupt, creează unul nou.
     def load(self):
-        if not self.save_path.exists():
-            default_data = self._default_data()
-            self._write_data(default_data)
-            return default_data
+        loaded_progress = self._read_data_file(self.save_path)
+        if loaded_progress is None:
+            loaded_progress = {}
 
-        try:
-            with self.save_path.open(
-                "r",
-                encoding="utf-8",
-            ) as save_file:
-                loaded_data = json.load(save_file)
+        loaded_settings = self._read_data_file(self.settings_path)
+        if loaded_settings is None:
+            # Migrează transparent setările din vechiul save.json combinat.
+            loaded_settings = {
+                key: loaded_progress[key]
+                for key in SETTINGS_KEYS
+                if key in loaded_progress
+            }
 
-            if not isinstance(loaded_data, dict):
-                raise ValueError(
-                    "Salvarea trebuie să conțină un obiect JSON."
-                )
-
-        except (
-            json.JSONDecodeError,
-            OSError,
-            ValueError,
-        ):
-            default_data = self._default_data()
-            self._write_data(default_data)
-            return default_data
-
-        # Completează automat cheile noi dacă jocul este actualizat.
         complete_data = self._default_data()
-        complete_data.update(loaded_data)
+        complete_data.update(loaded_progress)
+        complete_data.update(loaded_settings)
 
-        # Verifică și corectează tipurile valorilor importante.
         complete_data = self._validate_data(complete_data)
-
-        # Rescrie fișierul dacă au fost adăugate sau corectate valori.
-        if complete_data != loaded_data:
-            self._write_data(complete_data)
-
+        self._write_split_data(complete_data)
         return complete_data
+
+    @staticmethod
+    def _read_data_file(path):
+        try:
+            with path.open("r", encoding="utf-8") as data_file:
+                loaded_data = json.load(data_file)
+            if isinstance(loaded_data, dict):
+                return loaded_data
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+        return None
 
     # Verifică valorile citite, pentru ca o salvare greșită să nu strice jocul.
     def _validate_data(self, data):
@@ -139,22 +156,50 @@ class SaveManager:
                 resolution[1],
             ]
 
+        if isinstance(data.get("tutorial_completed"), bool):
+            validated_data["tutorial_completed"] = data[
+                "tutorial_completed"
+            ]
+
+        unlocked_achievements = data.get("unlocked_achievements")
+        if isinstance(unlocked_achievements, list):
+            validated_data["unlocked_achievements"] = sorted(
+                {
+                    value
+                    for value in unlocked_achievements
+                    if isinstance(value, str) and value
+                }
+            )
+
         return validated_data
 
     # Salvează toate datele curente pe disc.
     def save(self):
         self.data = self._validate_data(self.data)
-        self._write_data(self.data)
+        self._write_split_data(self.data)
+
+    def _write_split_data(self, data):
+        progress_data = {
+            key: deepcopy(data[key])
+            for key in PROGRESS_KEYS
+        }
+        settings_data = {
+            key: deepcopy(data[key])
+            for key in SETTINGS_KEYS
+        }
+        self._write_data(self.save_path, progress_data)
+        self._write_data(self.settings_path, settings_data)
 
     # Scrie datele mai întâi într-un fișier temporar.
     # Astfel, salvarea principală nu rămâne incompletă dacă jocul se închide.
-    def _write_data(self, data):
-        self.save_path.parent.mkdir(
+    @staticmethod
+    def _write_data(path, data):
+        path.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        temporary_path = self.save_path.with_suffix(
+        temporary_path = path.with_suffix(
             ".tmp"
         )
 
@@ -169,11 +214,25 @@ class SaveManager:
                 ensure_ascii=False,
             )
 
-        temporary_path.replace(self.save_path)
+        temporary_path.replace(path)
 
     # Returnează True dacă jucătorul a terminat deja introducerea.
     def is_intro_completed(self):
         return self.data["intro_completed"]
+
+    def is_tutorial_completed(self):
+        return self.data["tutorial_completed"]
+
+    def complete_tutorial(self):
+        if self.data["tutorial_completed"]:
+            return False
+        self.data["tutorial_completed"] = True
+        self.save()
+        return True
+
+    def queue_tutorial_replay(self):
+        self.data["tutorial_completed"] = False
+        self.save()
 
     # Returnează True dacă jucătorul a ajuns după primul checkpoint.
     # Permite CONTINUE chiar dacă intro-ul complet nu a fost încă terminat.
@@ -232,6 +291,19 @@ class SaveManager:
         if score > self.data["highest_score"]:
             self.data["highest_score"] = score
             self.save()
+
+    def get_unlocked_achievements(self):
+        return list(self.data.get("unlocked_achievements", []))
+
+    def unlock_achievement(self, achievement_id):
+        achievement_id = str(achievement_id)
+        unlocked = set(self.get_unlocked_achievements())
+        if achievement_id in unlocked:
+            return False
+        unlocked.add(achievement_id)
+        self.data["unlocked_achievements"] = sorted(unlocked)
+        self.save()
+        return True
 
     # Salvează volumele și starea modului fullscreen.
     def save_settings(

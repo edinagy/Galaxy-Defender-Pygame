@@ -1,0 +1,9 @@
+{
+    "intro_completed": false,
+    "tutorial_completed": false,
+    "current_scene": "planet",
+    "checkpoint": 0,
+    "campaign_score": 0,
+    "highest_score": 0,
+    "unlocked_achievements": []
+}

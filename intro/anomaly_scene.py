@@ -2,9 +2,42 @@ import math
 
 import pygame
 
+from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
+
 
 # Durata avertizării gravitaționale înainte de apariția wormhole-ului.
-SCENE_DURATION = 8.5
+SCENE_DURATION = 9.5
+
+STORY_CUES = (
+    (
+        0.4,
+        2.9,
+        "SHIP AI",
+        "Debris field cleared. Main drive is not responding to helm input.",
+        "DAMAGE CONTROL",
+    ),
+    (
+        3.0,
+        5.7,
+        "SHIP AI",
+        "The gravity field ahead is collapsing into an artificial transit aperture.",
+        "UNKNOWN PHYSICS",
+    ),
+    (
+        5.8,
+        7.7,
+        "COMMANDER VALE",
+        "GF-01, do not enter. Shut down everything and—",
+        "WEAK SIGNAL",
+    ),
+    (
+        7.8,
+        9.3,
+        "SHIP AI",
+        "External command link terminated.",
+        "SIGNAL LOST",
+    ),
+)
 
 
 # Reprezintă scena cinematică „Anomaly Detected”.
@@ -50,6 +83,7 @@ class AnomalyScene:
         self.small_font = pygame.font.Font(None, 27)
         self.medium_font = pygame.font.Font(None, 39)
         self.title_font = pygame.font.Font(None, 76)
+        self.cinematic = CinematicOverlay()
 
         self.reset()
 
@@ -118,6 +152,18 @@ class AnomalyScene:
         self._draw_ship()
         self._draw_warning_interface()
         self._draw_danger_border()
+        draw_camera_noise(
+            self.screen,
+            self.elapsed_time,
+            0.7 + self.anomaly_progress * 1.8,
+        )
+        self.cinematic.draw(
+            self.screen,
+            self.elapsed_time,
+            STORY_CUES,
+            "PROLOGUE 06  //  APERTURE COLLAPSE",
+            "COMMAND LINK LOST" if self.elapsed_time >= 7.8 else "GRAVITY FAILURE",
+        )
         self._draw_fade()
 
     # Mișcă fundalul din ce în ce mai puternic pe măsură ce nava este atrasă.
@@ -269,7 +315,7 @@ class AnomalyScene:
             else (225, 240, 255)
         )
         self._draw_text_with_shadow(
-            "ANOMALY DETECTED",
+            "GRAVITY WELL COLLAPSE",
             self.title_font,
             38,
             title_color,
@@ -366,23 +412,6 @@ class AnomalyScene:
 
         self._draw_progress_bar()
 
-        if self.elapsed_time >= 6.0:
-            continue_text = self.small_font.render(
-                "ENTER / SPACE - CONTINUE",
-                True,
-                (220, 232, 245),
-            )
-            self.screen.blit(
-                continue_text,
-                (
-                    self.width
-                    - continue_text.get_width()
-                    - 28,
-                    self.height
-                    - continue_text.get_height()
-                    - 22,
-                ),
-            )
 
     # Desenează o margine roșie intermitentă când pericolul devine critic.
     def _draw_danger_border(self):
@@ -492,13 +521,13 @@ class AnomalyScene:
                 255
                 * (1 - self.elapsed_time)
             )
-        elif self.elapsed_time > 7.7:
+        elif self.elapsed_time > 8.65:
             fade_alpha = int(
                 255
                 * min(
                     1.0,
                     (
-                        self.elapsed_time - 7.7
+                        self.elapsed_time - 8.65
                     )
                     / 0.8,
                 )
