@@ -41,6 +41,7 @@ class Gameplay:
         get_best_score,
         tutorial_is_completed=lambda: True,
         complete_tutorial=lambda: None,
+        audio_director=None,
     ):
         self.screen = screen
         self.width = screen.get_width()
@@ -74,6 +75,7 @@ class Gameplay:
         self.boss_phase_warning_sound = boss_phase_warning_sound
         self.energy_pulse_sound = energy_pulse_sound
         self.event_sounds = event_sounds
+        self.audio_director = audio_director
         self.get_music_volume = get_music_volume
         self.save_score = save_score
         self.get_best_score = get_best_score
@@ -126,6 +128,8 @@ class Gameplay:
         # ca toate valorile luptei sa fie reconstruite.
         if getattr(self, "boss_music_started", False):
             self.stop_boss_music()
+        if self.audio_director is not None:
+            self.audio_director.reset()
 
         self.starting_score = max(
             0,
@@ -212,7 +216,11 @@ class Gameplay:
         self.graze_milestone_duration = 96
         self.graze_milestone_value = 0
         self.graze_sound_cooldown = 0
-        self.graze_sound = self._create_graze_sound()
+        self.graze_sound = (
+            None
+            if self.audio_director is not None
+            else self._create_graze_sound()
+        )
         self.controller_fire_held = False
 
         # Fiecare nivel mai puternic lansează mai multe proiectile, așa că are
@@ -306,6 +314,40 @@ class Gameplay:
         if tutorial_enabled is None:
             tutorial_enabled = not self.tutorial_is_completed()
         self._start_tutorial(bool(tutorial_enabled))
+
+    # Reda un eveniment semantic prin noul mixer; testele si proiectele vechi
+    # pot continua sa foloseasca obiectele Sound primite in constructor.
+    def _play_audio(self, event_name, strength=1.0):
+        if self.audio_director is not None:
+            return self.audio_director.play(
+                event_name,
+                strength,
+            )
+
+        if event_name.startswith("player_fire_"):
+            self.shoot_sound.play()
+            return True
+        if event_name == "energy_pulse":
+            self.energy_pulse_sound.play()
+            return True
+        if event_name == "boss_phase":
+            self.boss_phase_warning_sound.play()
+            return True
+        if (
+            event_name.startswith("destroy_")
+            or event_name in (
+                "missile_explosion",
+                "player_destroyed",
+                "boss_generator",
+                "boss_explosion",
+            )
+        ):
+            self.explosion_sound.play()
+            return True
+        if event_name == "boss_destroyed":
+            self.enemy_destroy_sound.play()
+            return True
+        return False
 
     def _start_tutorial(self, enabled=True):
         self.tutorial_active = bool(enabled)
@@ -472,6 +514,7 @@ class Gameplay:
             >= self.player.maximum_special_energy
         ):
             self.energy_ready_timer = self.energy_ready_duration
+            self._play_audio("energy_ready")
 
     # Pornește unda numai când bara este complet încărcată.
     def _activate_energy_pulse(self):
@@ -496,7 +539,7 @@ class Gameplay:
         self.energy_ready_timer = 0
         self.energy_pulse_timer = self.energy_pulse_duration
         self.energy_pulse_hit_objects.clear()
-        self.energy_pulse_sound.play()
+        self._play_audio("energy_pulse")
         self._trigger_screen_shake(7, 13)
         return True
 
@@ -604,6 +647,7 @@ class Gameplay:
                 protecting_carrier.register_shield_hit(
                     enemy.rect.center
                 )
+                self._play_audio("shield_hit")
                 continue
 
             for _ in range(3):
@@ -613,6 +657,8 @@ class Gameplay:
 
             if enemy.is_dead():
                 self._destroy_enemy(enemy)
+            else:
+                self._play_audio("enemy_hit")
 
         # Pericolele evenimentelor primesc damage controlat, nu sunt șterse.
         event_targets = (
@@ -759,7 +805,9 @@ class Gameplay:
                 )
             )
 
-        self.shoot_sound.play()
+        self._play_audio(
+            f"player_fire_{weapon_level}"
+        )
 
     # Verifica permanent tasta SPACE, nu doar evenimentul unei apasari.
     def _update_player_autofire(self):
@@ -786,6 +834,8 @@ class Gameplay:
             )
 
     def update(self):
+        if self.audio_director is not None:
+            self.audio_director.update()
         self.background_timer += 1
 
         if self.energy_ready_timer > 0:
@@ -823,7 +873,7 @@ class Gameplay:
                 self.player_destruction_effect.update()
                 if self.player_destruction_effect.age == 53:
                     self._trigger_screen_shake(20, 28)
-                    self.explosion_sound.play()
+                    self._play_audio("player_destroyed")
             self._update_effects()
 
             if self.player_death_timer <= 0:
@@ -932,7 +982,7 @@ class Gameplay:
         self.crossfire_bullets.clear()
         self.homing_missiles.clear()
         self._trigger_screen_shake(16, 30)
-        self.explosion_sound.play()
+        self._play_audio("player_damage", 1.08)
         self.stop_boss_music()
 
     # Salvează scorul o singură dată, apoi permite afișarea Game Over.
@@ -1038,6 +1088,9 @@ class Gameplay:
         if self.player.absorb_shield_hit():
             self._break_graze_chain()
             self._trigger_screen_shake(4, 7)
+            self._play_audio(
+                "player_shield_absorb"
+            )
             return False
 
         # În perioada de invulnerabilitate, loviturile noi sunt ignorate.
@@ -1067,6 +1120,7 @@ class Gameplay:
                 effect_type="player_damage",
             )
         )
+        self._play_audio("player_damage")
 
         return True
 
@@ -1101,12 +1155,24 @@ class Gameplay:
         elif current_event is manager.missile_barrage:
             event_name = "missile_barrage"
         elif current_event is manager.phase_storm:
-            # Refolosește alarma dimensională existentă; nu cere asset audio nou.
-            event_name = "black_hole"
+            event_name = "phase_storm"
         else:
             return
 
-        event_sound = self.event_sounds.get(event_name)
+        if self.audio_director is not None:
+            self._play_audio(
+                f"event_{event_name}"
+            )
+            return
+
+        fallback_event_name = (
+            "black_hole"
+            if event_name == "phase_storm"
+            else event_name
+        )
+        event_sound = self.event_sounds.get(
+            fallback_event_name
+        )
         if event_sound is not None:
             event_sound.play()
 
@@ -1688,7 +1754,7 @@ class Gameplay:
             missile.missile_type == "heavy"
             or player_inside_blast
         ):
-            self.explosion_sound.play()
+            self._play_audio("missile_explosion")
             self._trigger_screen_shake(
                 8 if player_inside_blast else 5,
                 11,
@@ -1968,9 +2034,22 @@ class Gameplay:
         if self.graze_chain in (10, 25, 50, 100, 200):
             self.graze_milestone_value = self.graze_chain
             self.graze_milestone_timer = self.graze_milestone_duration
+            self._play_audio(
+                "combo_milestone",
+                0.72,
+            )
 
-        if self.graze_sound is not None and self.graze_sound_cooldown <= 0:
-            self.graze_sound.play()
+        if (
+            self.graze_sound_cooldown <= 0
+            and (
+                self.audio_director is not None
+                or self.graze_sound is not None
+            )
+        ):
+            if self.audio_director is not None:
+                self._play_audio("graze")
+            else:
+                self.graze_sound.play()
             self.graze_sound_cooldown = 5
 
         return awarded_score
@@ -2058,10 +2137,12 @@ class Gameplay:
         self.combo_milestone_title = title
         self.combo_milestone_value = threshold
         self.combo_milestone_timer = self.combo_milestone_duration
+        self._play_audio("combo_milestone")
 
     # Pierderea unei vieți rupe seria și împrăștie vizual Combat Link-ul.
     def _break_combo(self):
         if self.combo > 0:
+            self._play_audio("combo_break")
             self.combo_lost_value = self.combo
             self.combo_lost_timer = self.combo_lost_duration
             self.combo_milestone_timer = 0
@@ -2311,6 +2392,7 @@ class Gameplay:
                     enemy.elite_charge_timer = (
                         enemy.elite_charge_duration
                     )
+                    self._play_audio("elite_charge")
 
                 continue
 
@@ -2339,6 +2421,7 @@ class Gameplay:
                         )
                     )
 
+                self._play_audio("enemy_fire_shield")
                 enemy.shoot_timer = enemy.get_attack_delay(
                     330,
                     450,
@@ -2370,6 +2453,7 @@ class Gameplay:
                         "rapid",
                     )
                 )
+                self._play_audio("enemy_fire_scout")
                 enemy.burst_shots_remaining -= 1
                 enemy.burst_delay = max(
                     8,
@@ -2416,6 +2500,7 @@ class Gameplay:
                         )
                     )
 
+                self._play_audio("enemy_fire_tank")
                 enemy.shoot_timer = enemy.get_attack_delay(
                     390,
                     510,
@@ -2440,6 +2525,7 @@ class Gameplay:
                     "aimed",
                 )
             )
+            self._play_audio("enemy_fire_fighter")
             enemy.shoot_timer = enemy.get_attack_delay(
                 330,
                 450,
@@ -2471,6 +2557,7 @@ class Gameplay:
                     "elite",
                 )
             )
+        self._play_audio("enemy_fire_elite")
 
     # Trei proiectile urmăresc poziția curentă a jucătorului, cu o deviere mică.
     def _fire_phase_hunter_salvo(self, enemy):
@@ -2497,6 +2584,7 @@ class Gameplay:
                     "phase",
                 )
             )
+        self._play_audio("enemy_fire_phase")
 
     # Creeaza bossul imediat dupa terminarea celor noua challenge-uri.
     def _start_final_boss_if_ready(self):
@@ -2586,6 +2674,8 @@ class Gameplay:
         )
 
         self.boss_projectiles.extend(new_projectiles)
+        if new_projectiles:
+            self._play_audio("boss_fire")
 
         explosion_requests = (
             self.boss.consume_explosion_requests()
@@ -2607,7 +2697,7 @@ class Gameplay:
             )
             # Sunetul nu este pornit pentru fiecare explozie simultana.
             if explosion_index == 0:
-                self.explosion_sound.play()
+                self._play_audio("boss_explosion")
                 self._trigger_screen_shake(8, 13)
 
         if (
@@ -2853,6 +2943,7 @@ class Gameplay:
             self.damage_flash_timer = self.damage_flash_duration
             self.breach_warning_timer = self.breach_warning_duration
             self._trigger_screen_shake(7, 11)
+            self._play_audio("breach")
 
     def _handle_collisions(self):
         self._player_bullet_missile_collisions()
@@ -3007,7 +3098,7 @@ class Gameplay:
                 scale=1.18,
             )
         )
-        self.explosion_sound.play()
+        self._play_audio("destroy_crossfire")
         self.combo += 3
         self.combo_timer = 240
         self._update_multiplier()
@@ -3096,7 +3187,7 @@ class Gameplay:
         )
 
         if asteroid.radius >= 32:
-            self.explosion_sound.play()
+            self._play_audio("destroy_asteroid")
 
         self.combo += 1
         self.combo_timer = 160
@@ -3182,7 +3273,7 @@ class Gameplay:
                 scale=0.95,
             )
         )
-        self.explosion_sound.play()
+        self._play_audio("destroy_drone")
         self.combo += 1
         self.combo_timer = 150
         self._update_multiplier()
@@ -3216,6 +3307,7 @@ class Gameplay:
                     protecting_carrier.register_shield_hit(
                         enemy.rect.center
                     )
+                    self._play_audio("shield_hit")
                     if ally_bullet in self.ally_bullets:
                         self.ally_bullets.remove(
                             ally_bullet
@@ -3240,6 +3332,8 @@ class Gameplay:
 
                 if enemy.is_dead():
                     self._destroy_enemy(enemy)
+                else:
+                    self._play_audio("enemy_hit")
 
                 break
 
@@ -3263,6 +3357,7 @@ class Gameplay:
                     protecting_carrier.register_shield_hit(
                         enemy.rect.center
                     )
+                    self._play_audio("shield_hit")
                     if bullet in self.bullets:
                         self.bullets.remove(bullet)
                     break
@@ -3287,6 +3382,8 @@ class Gameplay:
 
                 if enemy.is_dead():
                     self._destroy_enemy(enemy)
+                else:
+                    self._play_audio("enemy_hit")
 
                 break
 
@@ -3341,7 +3438,9 @@ class Gameplay:
             elif enemy.enemy_type == "fighter":
                 self._trigger_screen_shake(3, 6)
 
-        self.explosion_sound.play()
+        self._play_audio(
+            f"destroy_{enemy.enemy_type}"
+        )
 
         self.combo += 1
         self.combo_timer = 180
@@ -3482,11 +3581,21 @@ class Gameplay:
                 )
             )
 
-            if hit_result == "generator_destroyed":
+            if hit_result in ("blocked", "shield"):
+                self._play_audio("shield_hit", 1.08)
+
+            elif hit_result in (
+                "generator_hit",
+                "body_hit",
+            ):
+                self._play_audio("enemy_hit", 0.82)
+
+            elif hit_result == "generator_destroyed":
                 self._award_score(750)
                 self.combo += 3
                 self.combo_timer = 300
                 self._update_multiplier()
+                self._play_audio("boss_generator")
 
             elif hit_result == "phase_changed":
                 # Tranzitia curata proiectilele vechi si ofera o pauza scurta.
@@ -3494,7 +3603,6 @@ class Gameplay:
                 self.enemy_bullets.clear()
                 self.crossfire_bullets.clear()
                 self.homing_missiles.clear()
-                self.explosion_sound.play()
                 self._trigger_screen_shake(14, 24)
                 self.boss_phase_transition_timer = (
                     self.boss_phase_transition_duration
@@ -3503,7 +3611,7 @@ class Gameplay:
                 # Gameplay deseneaza acum prezentarea completa a fazei,
                 # deci ascundem bannerul vechi al bossului ca sa nu se suprapuna.
                 self.boss.phase_banner_timer = 0
-                self.boss_phase_warning_sound.play()
+                self._play_audio("boss_phase")
 
                 if self.boss.phase == 3:
                     self._intensify_boss_music()
@@ -3523,10 +3631,7 @@ class Gameplay:
         self.boss_count += 1
         if self.hull_hits_taken == self.boss_hull_hits_at_start:
             self.flawless_bosses += 1
-        # Vechiul sunet greu functioneaza mai bine ca impact al unei nave distruse.
-        # Il redam mai rar, ca luptele aglomerate sa nu devina zgomotoase.
-        if random.random() < 0.55:
-            self.enemy_destroy_sound.play()
+        self._play_audio("boss_destroyed")
         self._trigger_screen_shake(18, 32)
 
     # Navele aliate pot absorbi trei lovituri înainte să fie distruse.
@@ -3562,7 +3667,7 @@ class Gameplay:
                             scale=1.15,
                         )
                     )
-                    self.explosion_sound.play()
+                    self._play_audio("destroy_ally")
                     self.allied_ships.remove(
                         allied_ship
                     )
@@ -3648,6 +3753,17 @@ class Gameplay:
                     self.lives += 1
                 else:
                     self._award_score(500)
+
+            powerup_audio = {
+                "weapon_upgrade": "powerup_weapon",
+                "double_shot": "powerup_weapon",
+                "shield": "powerup_shield",
+                "life": "powerup_life",
+            }.get(
+                powerup.powerup_type,
+                "powerup_score",
+            )
+            self._play_audio(powerup_audio)
 
             # Energia obiectului se strânge vizibil în navă la colectare.
             self.powerup_collect_effects.append(

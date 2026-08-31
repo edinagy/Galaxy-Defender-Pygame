@@ -364,10 +364,12 @@ class AsteroidScene:
             "assets/images/intro/"
             "asteroid_background.png"
         ),
+        sound_callback=None,
     ):
         self.screen = screen
         self.width = screen.get_width()
         self.height = screen.get_height()
+        self.sound_callback = sound_callback
 
         original_background = pygame.image.load(
             background_path
@@ -598,6 +600,7 @@ class AsteroidScene:
             )
         )
         self.fire_cooldown = 0.19
+        self._emit_sound("shot")
 
     # Actualizează proiectilele și le elimină după ieșirea din ecran.
     def _update_bullets(self, delta_time):
@@ -714,6 +717,9 @@ class AsteroidScene:
                         (100, 195, 255),
                         18,
                     )
+                    self._emit_sound(
+                        "asteroid_destroyed"
+                    )
                 else:
                     # O lovitură care nu distruge roca oferă feedback și puncte.
                     self.score += 10
@@ -723,6 +729,7 @@ class AsteroidScene:
                         (175, 225, 255),
                         5,
                     )
+                    self._emit_sound("asteroid_hit")
 
         if self.invincibility_timer > 0:
             return
@@ -749,6 +756,7 @@ class AsteroidScene:
                 (255, 125, 85),
                 22,
             )
+            self._emit_sound("ship_hit")
 
             if self.hull <= 0:
                 self.game_over = True
@@ -760,7 +768,13 @@ class AsteroidScene:
                     (105, 195, 255),
                     36,
                 )
+                self._emit_sound("ship_destroyed")
             break
+
+    # Trimite evenimentul audio catre director fara a lega scena de mixer.
+    def _emit_sound(self, event_name):
+        if self.sound_callback is not None:
+            self.sound_callback(event_name)
 
     # Creează particulele folosite pentru impacturi și explozii.
     def _create_explosion(

@@ -215,6 +215,18 @@ class StageProgressionTests(unittest.TestCase):
             stage_two_boss.stage_attack_rate,
             stage_one_boss.stage_attack_rate,
         )
+        self.assertAlmostEqual(
+            stage_two_boss.stage_health_multiplier,
+            1.25,
+        )
+        self.assertAlmostEqual(
+            stage_two_boss.stage_attack_rate,
+            1.12,
+        )
+        self.assertAlmostEqual(
+            stage_two_boss.stage_projectile_speed,
+            1.07,
+        )
         self.assertEqual(
             stage_two_boss.phase_two_threshold,
             int(stage_two_boss.max_hp * 2 / 3),

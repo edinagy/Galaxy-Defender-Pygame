@@ -2,7 +2,7 @@
 
 ## Validări automate executate
 
-- [x] Toate cele 40 de teste unitare trec.
+- [x] Toate cele 53 de teste unitare trec.
 - [x] Toate modulele principale trec verificarea de sintaxă.
 - [x] Jocul din surse trece `--smoke-test` cu drivere video/audio headless.
 - [x] Buildul Windows onedir este creat cu iconița finală.
@@ -12,6 +12,8 @@
 - [x] Benchmark headless: peste 400 FPS neplafonat pentru scena QA Stage 2.
 - [x] Salvarea coruptă este înlocuită cu valori sigure.
 - [x] Scorurile invalide, negative sau neverosimile sunt refuzate înainte de upload.
+- [x] Capsule Steam, iconițe și cinci capturi gameplay sunt generate și validate
+  automat la dimensiunile Steamworks curente.
 
 ## Verificare manuală înainte de Steam review
 

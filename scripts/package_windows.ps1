@@ -17,6 +17,20 @@ $archivePath = Join-Path $releaseFolder "GalaxyDefender-1.0.0-Windows.zip"
 $buildContents = Join-Path $projectRoot "dist\GalaxyDefender\*"
 
 New-Item -ItemType Directory -Path $releaseFolder -Force | Out-Null
+
+# Release-ul trebuie sa fie o oglinda exacta a build-ului curent. Altfel,
+# bibliotecile ramase de la versiuni mai vechi ajung inutil in arhiva finala.
+if (Test-Path -LiteralPath $releaseBuildFolder) {
+    $resolvedRelease = [IO.Path]::GetFullPath($releaseFolder)
+    $resolvedBuild = [IO.Path]::GetFullPath($releaseBuildFolder)
+    if (-not $resolvedBuild.StartsWith(
+        $resolvedRelease + [IO.Path]::DirectorySeparatorChar
+    )) {
+        throw "Refusing to clean a folder outside release."
+    }
+    Remove-Item -LiteralPath $releaseBuildFolder -Recurse -Force
+}
+
 New-Item -ItemType Directory -Path $releaseBuildFolder -Force | Out-Null
 Copy-Item -Path $buildContents -Destination $releaseBuildFolder -Recurse -Force
 Compress-Archive -Path (Join-Path $releaseBuildFolder "*") -DestinationPath $archivePath -Force

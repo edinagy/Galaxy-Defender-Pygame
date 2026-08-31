@@ -7,10 +7,12 @@ import pygame
 # Importă clasele folosite de aplicație.
 from achievement_manager import AchievementManager
 from background import Star
+from cinematic_audio import CinematicAudioDirector
 from controller_manager import ControllerManager
 from display_manager import DisplayManager
 from enemy import Enemy
 from gameplay import Gameplay
+from gameplay_audio import GameplayAudioDirector
 from intro.anomaly_scene import AnomalyScene
 from intro.asteroid_scene import AsteroidScene
 from intro.dead_star_scene import DeadStarScene
@@ -164,50 +166,17 @@ class GalaxyDefender:
         }
         self.current_music_mode = None
 
-        # Ambiantele scenelor ruleaza pe un canal separat fata de muzica.
-        # Astfel, muzica cinematică ramane continua intre cadrele povestii.
-        # Canalul 0 este rezervat exclusiv ambiantelor cinematice.
-        # Altfel, Pygame il putea reutiliza pentru gloante sau explozii si
-        # intrerupea imediat sunetul de fundal al scenei.
-        pygame.mixer.set_num_channels(16)
-        pygame.mixer.set_reserved(2)
-        self.ambience_channel = pygame.mixer.Channel(0)
-        self.scene_action_channel = pygame.mixer.Channel(1)
-        ambience_files = {
-            SceneManager.PLANET: "ambience_planet.wav",
-            SceneManager.HANGAR: "ambience_hangar.wav",
-            SceneManager.LAUNCH: "ambience_launch.wav",
-            SceneManager.VORTEX: "ambience_vortex.wav",
-            SceneManager.ASTEROIDS: "ambience_asteroids.wav",
-            SceneManager.ANOMALY: "ambience_anomaly.wav",
-            SceneManager.WORMHOLE: "ambience_wormhole.wav",
-            SceneManager.DEAD_STAR: "ambience_dead_star.wav",
-        }
-        self.scene_ambiences = {
-            scene_name: pygame.mixer.Sound(
-                f"assets/sounds/{file_name}"
-            )
-            for scene_name, file_name in ambience_files.items()
-        }
-        # Aceste piste nu sunt muzica: contin actiunile exact sincronizate
-        # cu timpul fiecarei scene (verificari, motoare, lansare, alarme etc.).
-        scene_action_files = {
-            SceneManager.PLANET: "scene_action_planet.wav",
-            SceneManager.HANGAR: "scene_action_hangar.wav",
-            SceneManager.LAUNCH: "scene_action_launch.wav",
-            SceneManager.VORTEX: "scene_action_vortex.wav",
-            SceneManager.ASTEROIDS: "scene_action_asteroids.wav",
-            SceneManager.ANOMALY: "scene_action_anomaly.wav",
-            SceneManager.WORMHOLE: "scene_action_wormhole.wav",
-            SceneManager.DEAD_STAR: "scene_action_dead_star.wav",
-        }
-        self.scene_action_sounds = {
-            scene_name: pygame.mixer.Sound(
-                f"assets/sounds/{file_name}"
-            )
-            for scene_name, file_name in scene_action_files.items()
-        }
-        self.current_ambience_scene = None
+        # Primele sapte canale sunt rezervate sound design-ului cinematic.
+        # Motoarele si texturile pot rula continuu fara sa fie intrerupte de
+        # proiectile, iar cinci canale separate permit impacturi stratificate.
+        pygame.mixer.set_num_channels(24)
+        pygame.mixer.set_reserved(7)
+        self.cinematic_audio = CinematicAudioDirector(
+            self.sound_volume
+        )
+        self.gameplay_audio = GameplayAudioDirector(
+            self.sound_volume
+        )
         self._apply_sound_volume()
         pygame.mixer.music.set_volume(
             self.music_volume
@@ -237,6 +206,7 @@ class GalaxyDefender:
             complete_tutorial=(
                 self.save_manager.complete_tutorial
             ),
+            audio_director=self.gameplay_audio,
         )
 
         # Jocul porneste cu atmosfera calma a meniului principal.
@@ -264,7 +234,10 @@ class GalaxyDefender:
 
         # Creează primul nivel jucabil al campaniei: câmpul de asteroizi.
         self.asteroid_scene = AsteroidScene(
-            self.screen
+            self.screen,
+            sound_callback=(
+                self.cinematic_audio.play_asteroid_event
+            ),
         )
 
         # Creează avertizarea gravitațională de după câmpul de asteroizi.
@@ -632,47 +605,38 @@ class GalaxyDefender:
             event_sound.set_volume(
                 self.sound_volume * 0.62
             )
-        # Ambianta este tinuta sub muzica si efectele importante ale scenei.
-        self.ambience_channel.set_volume(
-            self.sound_volume * 0.28
-        )
-        # Actiunile sincronizate trebuie auzite clar peste muzica si ambianta.
-        self.scene_action_channel.set_volume(
-            self.sound_volume
-        )
+        if hasattr(self, "cinematic_audio"):
+            self.cinematic_audio.set_master_volume(
+                self.sound_volume
+            )
+        if hasattr(self, "gameplay_audio"):
+            self.gameplay_audio.set_master_volume(
+                self.sound_volume
+            )
 
-    # Schimba numai stratul ambiental atunci cand se schimba scena cinematica.
+    # Sincronizeaza fiecare efect cu timpul real al scenei cinematice active.
     def _sync_scene_ambience(self):
         current_scene = self.scene_manager.current_scene
-
-        if current_scene == self.current_ambience_scene:
-            return
-
-        self.ambience_channel.fadeout(450)
-        self.scene_action_channel.fadeout(180)
-        self.current_ambience_scene = None
-
-        ambience = self.scene_ambiences.get(current_scene)
-        if ambience is None:
-            return
-
-        self.ambience_channel.play(
-            ambience,
-            loops=-1,
-            fade_ms=550,
+        cinematic_scenes = {
+            SceneManager.PLANET: self.planet_scene,
+            SceneManager.HANGAR: self.hangar_scene,
+            SceneManager.LAUNCH: self.launch_scene,
+            SceneManager.VORTEX: self.vortex_scene,
+            SceneManager.ASTEROIDS: self.asteroid_scene,
+            SceneManager.ANOMALY: self.anomaly_scene,
+            SceneManager.WORMHOLE: self.wormhole_scene,
+            SceneManager.DEAD_STAR: self.dead_star_scene,
+        }
+        scene = cinematic_scenes.get(current_scene)
+        elapsed_time = (
+            scene.elapsed_time
+            if scene is not None
+            else 0.0
         )
-
-        scene_action = self.scene_action_sounds.get(
-            current_scene
+        self.cinematic_audio.update(
+            current_scene,
+            elapsed_time,
         )
-        if scene_action is not None:
-            # Pista porneste de la secunda zero impreuna cu scena si nu se repeta.
-            self.scene_action_channel.play(
-                scene_action,
-                loops=0,
-                fade_ms=80,
-            )
-        self.current_ambience_scene = current_scene
 
     # Porneste piesa ceruta numai daca nu este deja activa.
     def _play_music_mode(self, music_mode, fade_ms=800):

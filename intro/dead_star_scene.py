@@ -8,6 +8,20 @@ from intro.cinematic_ui import CinematicOverlay, draw_camera_noise
 # Durata ultimei secvențe cinematice înainte de lupta principală.
 SCENE_DURATION = 13.0
 
+ENEMY_REVEAL_ASSETS = {
+    "scout": ("enemy_alien_scout_v2.png", (74, 118)),
+    "fighter": ("enemy_alien_fighter_v2.png", (116, 116)),
+    "tank": ("enemy_alien_tank_v2.png", (142, 112)),
+    "shield_carrier": (
+        "enemy_alien_shield_carrier.png",
+        (128, 132),
+    ),
+    "phase_hunter": (
+        "enemy_alien_phase_hunter.png",
+        (100, 126),
+    ),
+}
+
 STORY_CUES = (
     (
         0.5,
@@ -87,25 +101,21 @@ class DeadStarScene:
             (112, 128),
         )
 
-        scout_image = pygame.image.load(
-            "assets/images/enemies/"
-            "enemy_alien_scout.png"
-        ).convert_alpha()
-        fighter_image = pygame.image.load(
-            "assets/images/enemies/"
-            "enemy_alien_fighter.png"
-        ).convert_alpha()
-
-        self.scout_image = pygame.transform.smoothscale(
-            scout_image,
-            (92, 92),
-        )
-        self.fighter_image = pygame.transform.smoothscale(
-            fighter_image,
-            (82, 82),
-        )
+        # Reveal-ul foloseste exact lineup-ul actual din gameplay, nu vechile
+        # doua sprite-uri care ramasesera din prima versiune a cinematicului.
+        self.enemy_images = {
+            enemy_type: self._load_enemy_sprite(
+                file_name,
+                target_size,
+            )
+            for enemy_type, (
+                file_name,
+                target_size,
+            ) in ENEMY_REVEAL_ASSETS.items()
+        }
 
         self.small_font = pygame.font.Font(None, 27)
+        self.contact_font = pygame.font.Font(None, 18)
         self.medium_font = pygame.font.Font(None, 43)
         self.title_font = pygame.font.Font(None, 75)
         self.logo_font = pygame.font.Font(None, 112)
@@ -113,50 +123,82 @@ class DeadStarScene:
 
         self.enemy_formation = [
             {
-                "image": self.scout_image,
-                "start": (-120, -120),
-                "target": (265, 225),
+                "type": "shield_carrier",
+                "image": self.enemy_images[
+                    "shield_carrier"
+                ],
+                "start": (-150, -130),
+                "target": (230, 205),
                 "delay": 0.00,
             },
             {
-                "image": self.scout_image,
+                "type": "phase_hunter",
+                "image": self.enemy_images[
+                    "phase_hunter"
+                ],
                 "start": (
-                    self.width + 120,
-                    -100,
+                    self.width + 150,
+                    -130,
                 ),
-                "target": (925, 225),
+                "target": (950, 210),
                 "delay": 0.08,
             },
             {
-                "image": self.scout_image,
+                "type": "tank",
+                "image": self.enemy_images["tank"],
                 "start": (
                     self.width // 2,
-                    -150,
+                    -180,
                 ),
                 "target": (
-                    self.width // 2 - 46,
-                    175,
+                    self.width // 2 - 71,
+                    170,
                 ),
                 "delay": 0.15,
             },
             {
-                "image": self.fighter_image,
+                "type": "fighter",
+                "image": self.enemy_images[
+                    "fighter"
+                ],
                 "start": (-100, 120),
-                "target": (405, 305),
+                "target": (390, 325),
                 "delay": 0.22,
             },
             {
-                "image": self.fighter_image,
+                "type": "scout",
+                "image": self.enemy_images["scout"],
                 "start": (
                     self.width + 100,
                     120,
                 ),
-                "target": (795, 305),
+                "target": (825, 318),
                 "delay": 0.28,
             },
         ]
 
         self.reset()
+
+    # Incarca, decupeaza transparenta si scaleaza un sprite pentru cinematic.
+    @staticmethod
+    def _load_enemy_sprite(file_name, target_size):
+        image = pygame.image.load(
+            f"assets/images/enemies/{file_name}"
+        ).convert_alpha()
+        visible_bounds = image.get_bounding_rect(
+            min_alpha=8
+        )
+        if (
+            visible_bounds.width > 0
+            and visible_bounds.height > 0
+        ):
+            image = image.subsurface(
+                visible_bounds
+            ).copy()
+        return pygame.transform.smoothscale(
+            image,
+            target_size,
+        )
 
     # Resetează secvența la apariția în sistemul Dead Star.
     def reset(self):
@@ -376,14 +418,35 @@ class DeadStarScene:
                 * local_progress
             )
 
-            enemy_image = enemy_data[
-                "image"
-            ].copy()
+            enemy_type = enemy_data["type"]
+            enemy_image = enemy_data["image"].copy()
+            if enemy_type == "phase_hunter":
+                phase_visibility = (
+                    0.72
+                    + math.sin(
+                        self.elapsed_time * 18.0
+                        + enemy_data["delay"] * 11
+                    )
+                    * 0.18
+                )
+                enemy_alpha = int(
+                    formation_alpha
+                    * phase_visibility
+                )
+            else:
+                enemy_alpha = formation_alpha
             enemy_image.set_alpha(
-                formation_alpha
+                enemy_alpha
             )
 
             if local_progress > 0.72:
+                accent_color = {
+                    "scout": (255, 55, 65),
+                    "fighter": (65, 145, 255),
+                    "tank": (125, 255, 55),
+                    "shield_carrier": (75, 215, 255),
+                    "phase_hunter": (235, 70, 255),
+                }[enemy_type]
                 glow_surface = pygame.Surface(
                     (
                         enemy_image.get_width() + 32,
@@ -393,7 +456,7 @@ class DeadStarScene:
                 )
                 pygame.draw.ellipse(
                     glow_surface,
-                    (255, 45, 55, 32),
+                    (*accent_color, 34),
                     glow_surface.get_rect(),
                 )
                 self.screen.blit(
@@ -404,10 +467,120 @@ class DeadStarScene:
                     ),
                 )
 
+                self._draw_enemy_signature(
+                    enemy_type,
+                    enemy_image,
+                    enemy_x,
+                    enemy_y,
+                    formation_alpha,
+                    local_progress,
+                    accent_color,
+                )
+
             self.screen.blit(
                 enemy_image,
                 (enemy_x, enemy_y),
             )
+
+            if local_progress > 0.84:
+                label_alpha = min(
+                    formation_alpha,
+                    int(
+                        255
+                        * (local_progress - 0.84)
+                        / 0.16
+                    ),
+                )
+                label = self.contact_font.render(
+                    enemy_type.replace("_", " ").upper(),
+                    True,
+                    accent_color,
+                )
+                label.set_alpha(label_alpha)
+                self.screen.blit(
+                    label,
+                    (
+                        enemy_x
+                        + enemy_image.get_width() // 2
+                        - label.get_width() // 2,
+                        enemy_y
+                        + enemy_image.get_height()
+                        + 4,
+                    ),
+                )
+
+    # Adauga semnatura vizuala a claselor speciale din gameplay.
+    def _draw_enemy_signature(
+        self,
+        enemy_type,
+        enemy_image,
+        enemy_x,
+        enemy_y,
+        formation_alpha,
+        local_progress,
+        accent_color,
+    ):
+        center = (
+            enemy_x + enemy_image.get_width() // 2,
+            enemy_y + enemy_image.get_height() // 2,
+        )
+
+        if enemy_type == "shield_carrier":
+            shield = pygame.Surface(
+                (190, 190),
+                pygame.SRCALPHA,
+            )
+            pulse = (
+                0.5
+                + math.sin(self.elapsed_time * 4.5)
+                * 0.5
+            )
+            shield_alpha = int(
+                min(105, formation_alpha * 0.36)
+                * local_progress
+            )
+            pygame.draw.circle(
+                shield,
+                (*accent_color, int(shield_alpha * 0.20)),
+                (95, 95),
+                74,
+            )
+            pygame.draw.circle(
+                shield,
+                (*accent_color, shield_alpha),
+                (95, 95),
+                int(74 + pulse * 4),
+                2,
+            )
+            pygame.draw.arc(
+                shield,
+                (*accent_color, min(150, shield_alpha + 35)),
+                pygame.Rect(14, 14, 162, 162),
+                self.elapsed_time * 1.7,
+                self.elapsed_time * 1.7 + math.pi * 0.72,
+                3,
+            )
+            self.screen.blit(
+                shield,
+                (center[0] - 95, center[1] - 95),
+            )
+
+        elif enemy_type == "phase_hunter":
+            ghost_alpha = int(
+                min(72, formation_alpha * 0.24)
+                * local_progress
+            )
+            for offset_x in (-8, 8):
+                ghost = enemy_image.copy()
+                ghost.set_alpha(ghost_alpha)
+                ghost.fill(
+                    (*accent_color, 255),
+                    special_flags=pygame.BLEND_RGBA_MULT,
+                )
+                self.screen.blit(
+                    ghost,
+                    (enemy_x + offset_x, enemy_y),
+                )
 
     # Afișează pe rând cele trei momente narative finale.
     def _draw_story_titles(self):

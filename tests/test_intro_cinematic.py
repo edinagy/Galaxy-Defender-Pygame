@@ -11,7 +11,11 @@ from intro.anomaly_scene import AnomalyScene, SCENE_DURATION as ANOMALY_DURATION
 from intro.anomaly_scene import STORY_CUES as ANOMALY_CUES
 from intro.asteroid_scene import AsteroidObstacle
 from intro.asteroid_scene import STORY_CUES as ASTEROID_CUES
-from intro.dead_star_scene import DeadStarScene, SCENE_DURATION as DEAD_STAR_DURATION
+from intro.dead_star_scene import (
+    ENEMY_REVEAL_ASSETS,
+    DeadStarScene,
+    SCENE_DURATION as DEAD_STAR_DURATION,
+)
 from intro.dead_star_scene import STORY_CUES as DEAD_STAR_CUES
 from intro.hangar_scene import HangarScene, SCENE_DURATION as HANGAR_DURATION
 from intro.hangar_scene import STORY_CUES as HANGAR_CUES
@@ -107,6 +111,31 @@ class IntroCinematicTests(unittest.TestCase):
         self.assertTrue(asteroid.base_image.get_flags() & pygame.SRCALPHA)
         self.assertGreater(asteroid.base_image.get_bounding_rect().width, 0)
         self.assertGreater(asteroid.base_image.get_bounding_rect().height, 0)
+
+    def test_dead_star_reveals_the_current_enemy_lineup(self):
+        scene = DeadStarScene(self.screen)
+        expected_types = {
+            "scout",
+            "fighter",
+            "tank",
+            "shield_carrier",
+            "phase_hunter",
+        }
+
+        self.assertEqual(set(ENEMY_REVEAL_ASSETS), expected_types)
+        self.assertEqual(
+            {enemy["type"] for enemy in scene.enemy_formation},
+            expected_types,
+        )
+        self.assertTrue(
+            ENEMY_REVEAL_ASSETS["scout"][0].endswith("_v2.png")
+        )
+        self.assertTrue(
+            ENEMY_REVEAL_ASSETS["fighter"][0].endswith("_v2.png")
+        )
+        self.assertTrue(
+            ENEMY_REVEAL_ASSETS["tank"][0].endswith("_v2.png")
+        )
 
 
 if __name__ == "__main__":

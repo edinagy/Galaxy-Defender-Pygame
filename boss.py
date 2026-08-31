@@ -523,19 +523,28 @@ class Boss:
         self.screen_height = screen_height
         self.difficulty_stage = max(1, int(difficulty_stage))
         stage_progress = self.difficulty_stage - 1
-        self.stage_health_multiplier = 1.0 + stage_progress * 0.35
-        self.stage_attack_rate = min(
-            2.0,
-            1.0 + stage_progress * 0.20,
-        )
-        self.stage_projectile_speed = min(
-            1.65,
-            1.0 + stage_progress * 0.12,
-        )
-        self.stage_movement_speed = min(
-            1.60,
-            1.0 + stage_progress * 0.12,
-        )
+        # Stage 2 introduce deja atacul dimensional, asa ca saltul brut al
+        # tuturor statisticilor il facea disproportionat de greu. Il pastram
+        # drept primul examen serios, iar curba completa incepe din Stage 3.
+        if self.difficulty_stage == 2:
+            self.stage_health_multiplier = 1.25
+            self.stage_attack_rate = 1.12
+            self.stage_projectile_speed = 1.07
+            self.stage_movement_speed = 1.07
+        else:
+            self.stage_health_multiplier = 1.0 + stage_progress * 0.35
+            self.stage_attack_rate = min(
+                2.0,
+                1.0 + stage_progress * 0.20,
+            )
+            self.stage_projectile_speed = min(
+                1.65,
+                1.0 + stage_progress * 0.12,
+            )
+            self.stage_movement_speed = min(
+                1.60,
+                1.0 + stage_progress * 0.12,
+            )
         # Dimensiunile pastreaza proportiile noului sprite lat de final boss.
         self.width = 620
         self.height = 350

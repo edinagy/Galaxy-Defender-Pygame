@@ -22,3 +22,7 @@ Prima versiune Windows pregătită pentru release.
 - Leaderboard local, validarea rundelor și coadă offline pentru Steam.
 - Save și settings separate, compatibile cu Steam Auto-Cloud.
 - Build Windows cu iconiță și smoke-test automat.
+- Sound design cinematic și de gameplay refăcut cu efecte CC0 stratificate,
+  mixaj pe priorități și limitare pentru luptele aglomerate.
+- Semnături audio separate pentru arme, clasele de inamici, boss, combo,
+  Energy Pulse și toate evenimentele spațiale.

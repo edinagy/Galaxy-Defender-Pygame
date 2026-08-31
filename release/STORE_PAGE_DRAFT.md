@@ -42,3 +42,10 @@ events arrive sooner and score rewards grow with the risk.
 7. 43–45s: logo plus “How deep can you go?” and Steam wishlist callout.
 
 Use only real gameplay footage. Do not show debug values or unconfigured Steam UI.
+
+## Graphical assets
+
+The upload-ready capsule, library, icon and screenshot package is available in
+`release/steam_assets/`. The key-art environment uses AI-assisted generation and
+must be declared in the Steamworks Content Survey. Every store screenshot is an
+actual gameplay capture at 1920x1080.

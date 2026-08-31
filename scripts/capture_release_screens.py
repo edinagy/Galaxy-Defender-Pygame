@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import pygame
 
+from boss import Boss
 from main import GalaxyDefender
 from scene_manager import SceneManager
 
@@ -101,6 +102,51 @@ def main():
         game.gameplay.lives = 1
         save_frame(game, "05_critical_hull_feedback.png")
         game.gameplay.lives = 5
+
+        # Cadru de magazin autentic din confruntarea Stage 2, cu HUD-ul si
+        # proiectilele reale ale fazei finale Sovereign.
+        game.gameplay.enemies.clear()
+        game.gameplay.enemy_bullets.clear()
+        game.gameplay.boss_projectiles.clear()
+        game.gameplay.score = 386420
+        game.gameplay.combo = 76
+        game.gameplay.best_combo = 76
+        game.gameplay.multiplier = 5
+        game.gameplay.graze_chain = 14
+        game.gameplay.stage = 2
+        game.gameplay.wave = 10
+        game.gameplay.boss = Boss(
+            game.gameplay.width,
+            game.gameplay.height,
+            2,
+        )
+        game.gameplay.boss.state = "active"
+        game.gameplay.boss.intro = False
+        game.gameplay.boss.y = game.gameplay.boss.target_y
+        game.gameplay.boss.phase = 3
+        game.gameplay.boss.phase_two = True
+        game.gameplay.boss.phase_three = True
+        game.gameplay.boss.hp = int(
+            game.gameplay.boss.max_hp * 0.28
+        )
+        game.gameplay.boss._update_rectangles()
+        game.gameplay.boss_spawned = True
+        game.gameplay.boss_defeated = False
+        game.gameplay.player.rect.centerx = game.gameplay.width // 2
+        game.gameplay.player.rect.bottom = game.gameplay.height - 28
+        game.gameplay.boss_projectiles.extend(
+            game.gameplay.boss._create_core_burst()
+        )
+        game.gameplay.boss_projectiles.extend(
+            game.gameplay.boss._create_seekers(
+                game.gameplay.player.rect,
+                seeker_count=3,
+            )
+        )
+        for _ in range(30):
+            for projectile in game.gameplay.boss_projectiles:
+                projectile.update(game.gameplay.player.rect)
+        save_frame(game, "06_stage_two_sovereign.png")
 
         start_time = time.perf_counter()
         benchmark_frames = 180
